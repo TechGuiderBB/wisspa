@@ -17,8 +17,8 @@ vite.config.js
 
 # Rust / Tauri
 src-tauri/target/
-src-tauri/Cargo.lock
 src-tauri/gen/
+# NOTE: src-tauri/Cargo.lock is committed (this is a binary, not a library)
 
 # Editor
 .vscode/

@@ -1,3 +1,4 @@
 target/
-Cargo.lock
 gen/
+# NOTE: Cargo.lock is intentionally committed — Wisspa is a binary, not a
+# library, so we pin the exact dependency versions we ship.

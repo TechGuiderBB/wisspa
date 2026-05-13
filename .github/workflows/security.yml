@@ -1,0 +1,98 @@
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Re-run weekly so newly published advisories surface even on quiet weeks.
+    - cron: "0 14 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          VER=8.21.2
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp
+          sudo install /tmp/gitleaks /usr/local/bin/gitleaks
+      - run: gitleaks detect --source . --redact --no-banner
+
+  rust-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry + cargo-audit binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-audit-v1
+      - name: Install cargo-audit
+        run: command -v cargo-audit >/dev/null || cargo install cargo-audit --locked
+      - name: Audit Cargo.lock
+        # --deny only the real-impact classes. Unmaintained-package warnings
+        # from Tauri's cross-platform dep graph (GTK3 etc.) are not gated.
+        run: |
+          cd src-tauri
+          cargo audit --deny vulnerability --deny unsound
+
+  npm-audit:
+    name: pnpm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod
+      - name: Dev-deps audit (warn only)
+        # Failing the build on dev-only advisories causes too much churn;
+        # the prod audit above is the actual gate. Surface dev findings as
+        # warnings so they're visible without blocking PRs.
+        run: pnpm audit || echo "::warning::Dev-dependency vulnerabilities present (non-blocking)"
+
+  sast:
+    name: semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet semgrep
+      - name: Semgrep scan
+        run: |
+          semgrep \
+            --config p/security-audit \
+            --config p/rust \
+            --config p/typescript \
+            --config p/react \
+            --config p/owasp-top-ten \
+            --error --metrics=off \
+            --exclude node_modules --exclude src-tauri/target --exclude dist --exclude src-tauri/gen \
+            --severity ERROR --severity WARNING \
+            .
