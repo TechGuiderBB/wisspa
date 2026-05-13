@@ -16,6 +16,8 @@ pub struct Settings {
     pub prompt_llm: Llm,
     #[serde(default)]
     pub onboarding_completed: bool,
+    #[serde(default)]
+    pub mic_calibration: Option<MicCalibration>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +28,19 @@ pub struct General {
     pub play_sounds: bool,
     pub sound_volume: f32,
     pub theme: String, // "system" | "light" | "dark"
+    #[serde(default = "default_mic_sensitivity")]
+    pub mic_sensitivity: String, // "off" | "low" | "medium" | "high"
+}
+
+fn default_mic_sensitivity() -> String {
+    "medium".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MicCalibration {
+    pub silence_peak: f32,
+    pub min_bytes_per_second: u32,
+    pub calibrated_at: i64, // unix ms
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +83,7 @@ impl Default for Settings {
                 play_sounds: true,
                 sound_volume: 0.5,
                 theme: "system".to_string(),
+                mic_sensitivity: "medium".to_string(),
             },
             hotkeys: Hotkeys {
                 // Phase 1/2 ships with safe combos; PRD §4.2 defaults to `fn` etc.
@@ -97,6 +113,7 @@ impl Default for Settings {
                 model: "claude-sonnet-4-6".to_string(),
             },
             onboarding_completed: false,
+            mic_calibration: None,
         }
     }
 }

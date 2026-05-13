@@ -1,7 +1,7 @@
 # Wisspa — Product Requirements Document
 
 > **Working name: Wisspa.** This is a placeholder — global find/replace before launch.
-> **Owner:** Brooke (TechGuider)
+> **Owner:** TechGuider
 > **Status:** v1.0 spec — intended for single-pass Claude Code implementation
 > **Target platform (v1):** macOS 13+ (Apple Silicon)
 > **Last updated:** May 2026
@@ -61,7 +61,7 @@ Solo founders, developers, and consultants who already work with Claude / ChatGP
 | Layer | Choice | Version | Notes |
 |---|---|---|---|
 | Desktop framework | Tauri | 2.x (latest stable) | Rust core + WebView frontend |
-| Frontend | React + Vite + TypeScript | React 18, Vite 5, TS 5.x | Matches Brooke's existing stack |
+| Frontend | React + Vite + TypeScript | React 18, Vite 5, TS 5.x | Standard, well-supported stack |
 | Styling | Tailwind CSS | 3.x | Plus shadcn/ui components |
 | State | Zustand | latest | Lightweight, no boilerplate |
 | STT | Groq API | `whisper-large-v3-turbo` | ~200ms median latency |
@@ -686,7 +686,7 @@ pnpm tauri dev          # Dev mode
 pnpm tauri build        # Production build → dmg + app bundle in src-tauri/target/release/bundle/
 ```
 
-The user installs the `.dmg`, drags Wisspa.app to Applications, and launches. No code signing required for personal use — Brooke runs `xattr -d com.apple.quarantine /Applications/Wisspa.app` once if Gatekeeper complains.
+The user installs the `.dmg`, drags Wisspa.app to Applications, and launches. Production builds will ship signed and notarised; for unsigned dev builds, `xattr -d com.apple.quarantine /Applications/Wisspa.app` clears the Gatekeeper flag.
 
 ---
 
@@ -755,7 +755,7 @@ The build is complete when **all** of the following are true:
 
 ---
 
-## 13. v2 Candidate Features (Brooke's roadmap notes — NOT for v1)
+## 13. v2 Candidate Features (roadmap notes — NOT for v1)
 
 - Local STT fallback (whisper.cpp with Metal acceleration) for full privacy mode.
 - Streaming STT for sub-200ms perceived latency.

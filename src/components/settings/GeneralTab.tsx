@@ -1,4 +1,13 @@
-import type { Settings, RecordingMode, Theme } from "../../lib/settings";
+import { useState } from "react";
+import {
+  getSettings,
+  saveSettings,
+  type MicSensitivity,
+  type RecordingMode,
+  type Settings,
+  type Theme,
+} from "../../lib/settings";
+import { sampleAmbient, sampleSpeech } from "../../lib/audio";
 import { Row, Toggle, Radio, Select, Slider } from "./ui";
 
 type Props = {
@@ -8,6 +17,42 @@ type Props = {
 
 export default function GeneralTab({ settings, patch }: Props) {
   const g = settings.general;
+  const cal = settings.mic_calibration;
+  const [calStage, setCalStage] = useState<
+    "idle" | "ambient" | "speech" | "done" | "error"
+  >("idle");
+  const [calError, setCalError] = useState<string | null>(null);
+
+  async function recalibrate() {
+    setCalError(null);
+    try {
+      setCalStage("ambient");
+      const amb = await sampleAmbient(2000);
+      await new Promise((r) => setTimeout(r, 400));
+      setCalStage("speech");
+      const speech = await sampleSpeech(2500);
+      const silencePeak = Math.max(6, amb.peakAmplitude * 2);
+      const minBytesPerSecond = Math.max(
+        1500,
+        Math.round(speech.bytesPerSecond * 0.3),
+      );
+      const current = await getSettings();
+      await saveSettings({
+        ...current,
+        mic_calibration: {
+          silence_peak: silencePeak,
+          min_bytes_per_second: minBytesPerSecond,
+          calibrated_at: Date.now(),
+        },
+      });
+      setCalStage("done");
+      setTimeout(() => setCalStage("idle"), 2500);
+    } catch (err) {
+      setCalError(String(err));
+      setCalStage("error");
+    }
+  }
+
   return (
     <div className="space-y-3">
       <Row label="Launch on login">
@@ -68,6 +113,49 @@ export default function GeneralTab({ settings, patch }: Props) {
             { value: "dark", label: "Dark" },
           ]}
         />
+      </Row>
+
+      <Row
+        label="Mic sensitivity"
+        hint="How quickly Wisspa decides a recording is silent. Higher = looser."
+      >
+        <Radio
+          value={g.mic_sensitivity}
+          onChange={(v) => patch({ mic_sensitivity: v as MicSensitivity })}
+          options={[
+            { value: "off", label: "Off" },
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+          ]}
+        />
+      </Row>
+
+      <Row
+        label="Re-calibrate mic"
+        hint={
+          cal
+            ? `Calibrated ${new Date(cal.calibrated_at).toLocaleDateString()} · silence peak ${cal.silence_peak.toFixed(1)}, min ${cal.min_bytes_per_second.toLocaleString()} B/s`
+            : "Not yet calibrated — using defaults"
+        }
+      >
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={recalibrate}
+            disabled={calStage === "ambient" || calStage === "speech"}
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {calStage === "idle" && "Re-calibrate"}
+            {calStage === "ambient" && "Stay quiet…"}
+            {calStage === "speech" && "Say \"hello hello hello\"…"}
+            {calStage === "done" && "✓ Saved"}
+            {calStage === "error" && "Failed — retry"}
+          </button>
+          {calError && (
+            <span className="text-xs text-red-600">{calError}</span>
+          )}
+        </div>
       </Row>
     </div>
   );

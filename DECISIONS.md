@@ -25,7 +25,7 @@ After issuing simulated `Cmd+V`, wait 200ms before restoring previous clipboard.
 A single invisible window hosts the React app so MediaRecorder has a webview to live in. The menu bar tray icon and visible Settings window arrive in Phase 2/3.
 
 ### 7. App bundle identifier = `com.techguider.wisspa`
-Brooke's domain (TechGuider) namespaced.
+TechGuider-namespaced bundle identifier.
 
 ### 8. Frontend package name = `wisspa` (lowercase)
 npm requires lowercase package names; product name in Tauri config stays `Wisspa`.
