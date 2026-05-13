@@ -202,7 +202,7 @@ Production: `Console.app` → filter by `wisspa`. Most log lines are `INFO`-leve
 
 ## License
 
-Personal-use software for Brooke (TechGuider). No license granted for redistribution at this point.
+WISSPA is being built for public release. The current v0.1.0 build is a public preview; final licensing for general distribution will be confirmed before v1.0 ships. Join the waitlist for launch updates.
 
 ---
 

@@ -4,7 +4,19 @@ use crate::{
     AppState,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+
+/// Event consumed by the runtime pill so it can flash a brief warning state
+/// even when the user has macOS notifications muted or isn't watching the
+/// top-right corner of the screen.
+const STATUS_EVENT: &str = "wisspa://recording-status";
+
+fn emit_status<R: Runtime>(app: &AppHandle<R>, kind: &str, message: &str) {
+    let _ = app.emit(STATUS_EVENT, serde_json::json!({
+        "kind": kind,        // "no-speech" | "error"
+        "message": message,
+    }));
+}
 
 #[tauri::command]
 pub fn ping() -> &'static str {
@@ -151,6 +163,36 @@ pub fn request_screen_recording_access() {
 }
 
 #[tauri::command]
+pub async fn report_silent_recording<R: Runtime>(
+    app: AppHandle<R>,
+    mode: String,
+    duration_ms: i64,
+    peak_amplitude: f32,
+    bytes: i64,
+) -> Result<(), String> {
+    log::info!(
+        "peak={peak_amplitude:.2} bytes={bytes} duration={duration_ms}ms — silent recording suppressed (mode={mode})"
+    );
+    let active_app = crate::app_detector::frontmost_app_name().await.ok();
+    let _ = history::insert(history::NewEntry {
+        mode: mode.clone(),
+        active_app,
+        raw_transcript: String::new(),
+        output: Some("(no speech detected)".to_string()),
+        action_id: None,
+        duration_ms: Some(duration_ms),
+        status: "cancelled".to_string(),
+    });
+    toast::warn(
+        &app,
+        "No speech detected",
+        "Check your mic input — try again.",
+    );
+    emit_status(&app, "no-speech", "No speech detected");
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_history(limit: Option<i64>) -> Result<Vec<history::Entry>, String> {
     history::recent(limit.unwrap_or(100)).map_err(|e| format!("{e:#}"))
 }
@@ -209,10 +251,39 @@ pub async fn process_audio<R: Runtime>(
     log::info!("transcript ({mode}): {transcript:?}");
 
     if transcript.is_empty() {
-        log::warn!("empty transcript; silent dismiss");
+        log::warn!("empty transcript; no speech detected");
+        toast::warn(
+            &app,
+            "No speech detected",
+            "Whisper returned no text — try speaking up or closer to the mic.",
+        );
+        emit_status(&app, "no-speech", "No speech detected");
         let _ = history::insert(history::NewEntry {
             mode: mode.clone(),
             raw_transcript: String::new(),
+            status: "cancelled".to_string(),
+            ..Default::default()
+        });
+        return Ok(String::new());
+    }
+
+    // Whisper hallucination filter: when the model is fed near-silent or
+    // noise-only audio, it falls back to high-probability outro phrases from
+    // its training data ("Thank you", "Thanks for watching", "Salam", etc.).
+    // Suppress these before they reach the cleanup LLM (which itself can
+    // hallucinate a chatbot response on top of the garbage).
+    if looks_like_whisper_hallucination(&transcript) {
+        log::warn!("suppressing likely Whisper hallucination: {transcript:?}");
+        toast::warn(
+            &app,
+            "No speech detected",
+            "Wisspa caught a known transcription hallucination — try again.",
+        );
+        emit_status(&app, "no-speech", "No speech detected");
+        let _ = history::insert(history::NewEntry {
+            mode: mode.clone(),
+            raw_transcript: transcript.clone(),
+            output: Some("(suppressed Whisper hallucination)".to_string()),
             status: "cancelled".to_string(),
             ..Default::default()
         });
@@ -324,6 +395,54 @@ async fn run_action_mode<R: Runtime>(
             Err(format!("action: {e:#}"))
         }
     }
+}
+
+/// Known low-information Whisper outputs that the model emits when fed
+/// silence or noise. Matching is case-insensitive, punctuation-tolerant.
+const WHISPER_HALLUCINATIONS: &[&str] = &[
+    "thank you",
+    "thanks",
+    "thanks for watching",
+    "thank you for watching",
+    "thank you for listening",
+    "thanks for listening",
+    "thanks for joining",
+    "thank you so much",
+    "bye",
+    "goodbye",
+    "subscribe",
+    "please subscribe",
+    "like and subscribe",
+    "you",
+    "music",
+    "applause",
+    "silence",
+    "salam",
+    "salam forgiveness",
+    "the end",
+    "end of recording",
+    "amen",
+];
+
+fn normalise_for_match(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_ascii_punctuation())
+        .collect::<String>()
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn looks_like_whisper_hallucination(text: &str) -> bool {
+    let n = normalise_for_match(text);
+    if n.is_empty() {
+        return true;
+    }
+    // Denylist-only: legitimate short dictations like "Yes", "No", "OK"
+    // must not be suppressed. The list captures Whisper's known fallback
+    // phrases for silent / noise input.
+    WHISPER_HALLUCINATIONS.contains(&n.as_str())
 }
 
 fn preview(text: &str) -> String {

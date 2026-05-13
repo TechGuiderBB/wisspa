@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import {
   getPermissions,
+  getSettings,
   openSystemSettings,
+  type MicCalibration,
   type PermissionPane,
   type PermissionStatus,
   type PermissionsSnapshot,
@@ -9,12 +11,15 @@ import {
 
 export default function AboutTab() {
   const [perms, setPerms] = useState<PermissionsSnapshot | null>(null);
+  const [cal, setCal] = useState<MicCalibration | null>(null);
 
   async function refresh() {
     try {
       setPerms(await getPermissions());
+      const s = await getSettings();
+      setCal(s.mic_calibration);
     } catch (err) {
-      console.error("getPermissions failed:", err);
+      console.error("about refresh failed:", err);
     }
   }
 
@@ -73,6 +78,33 @@ export default function AboutTab() {
         >
           Refresh
         </button>
+      </Section>
+
+      <Section title="Mic calibration">
+        {cal ? (
+          <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-xs text-neutral-700">
+            <div>
+              Last calibrated{" "}
+              <strong>{new Date(cal.calibrated_at).toLocaleString()}</strong>
+            </div>
+            <div className="mt-1 text-neutral-500">
+              Silence peak threshold:{" "}
+              <code className="font-mono">{cal.silence_peak.toFixed(1)}</code> ·
+              Min bytes/sec:{" "}
+              <code className="font-mono">
+                {cal.min_bytes_per_second.toLocaleString()}
+              </code>
+            </div>
+            <div className="mt-1 text-neutral-500">
+              Re-calibrate any time from Settings → General.
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-xs text-neutral-500">
+            Not yet calibrated. Defaults will be used until you run the
+            calibration step (Settings → General → Re-calibrate mic).
+          </div>
+        )}
       </Section>
 
       <Section title="Stack">

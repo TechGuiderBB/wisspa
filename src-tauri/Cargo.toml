@@ -2,7 +2,7 @@
 name = "wisspa"
 version = "0.1.0"
 description = "Wisspa — system-wide AI voice tool for macOS"
-authors = ["Brooke (TechGuider)"]
+authors = ["TechGuider"]
 edition = "2021"
 
 [build-dependencies]

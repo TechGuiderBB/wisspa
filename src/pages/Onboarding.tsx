@@ -8,12 +8,15 @@ import {
   PermissionStatus,
   completeOnboarding,
   getPermissions,
+  getSettings,
   openSystemSettings,
   reportMicrophoneStatus,
   requestScreenRecordingAccess,
   saveApiKey,
+  saveSettings,
   testApiKey,
 } from "../lib/settings";
+import { sampleAmbient, sampleSpeech } from "../lib/audio";
 
 type Step =
   | "welcome"
@@ -600,6 +603,26 @@ function HotkeysStep() {
   );
 }
 
+function Spinner() {
+  return (
+    <span
+      className="inline-block h-3 w-3 rounded-full border-2 border-blue-500 border-t-transparent animate-spin"
+      aria-hidden
+    />
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-white border border-slate-200 px-2 py-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+      <div className="font-mono text-sm text-slate-900">{value}</div>
+    </div>
+  );
+}
+
 function Combo({
   label,
   combo,
@@ -626,40 +649,154 @@ function Combo({
   );
 }
 
+type CalibrationStage = "idle" | "ambient" | "speech" | "done" | "error";
+
 function TestStep() {
+  const [stage, setStage] = useState<CalibrationStage>("idle");
+  const [ambientPeak, setAmbientPeak] = useState<number | null>(null);
+  const [speechPeak, setSpeechPeak] = useState<number | null>(null);
+  const [bytesPerSecond, setBytesPerSecond] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
+
+  async function runCalibration() {
+    setError(null);
+    setAmbientPeak(null);
+    setSpeechPeak(null);
+    setBytesPerSecond(null);
+    try {
+      setStage("ambient");
+      const amb = await sampleAmbient(2000);
+      setAmbientPeak(amb.peakAmplitude);
+
+      // Short pause so the user can transition into "say hello".
+      await new Promise((r) => setTimeout(r, 500));
+
+      setStage("speech");
+      const speech = await sampleSpeech(2500);
+      setSpeechPeak(speech.peakAmplitude);
+      setBytesPerSecond(speech.bytesPerSecond);
+
+      // Compute and persist thresholds.
+      const silencePeak = Math.max(6, amb.peakAmplitude * 2);
+      const minBytesPerSecond = Math.max(
+        1500,
+        Math.round(speech.bytesPerSecond * 0.3),
+      );
+
+      const settings = await getSettings();
+      const next = {
+        ...settings,
+        mic_calibration: {
+          silence_peak: silencePeak,
+          min_bytes_per_second: minBytesPerSecond,
+          calibrated_at: Date.now(),
+        },
+      };
+      await saveSettings(next);
+      setStage("done");
+    } catch (err) {
+      console.error("calibration failed:", err);
+      setError(String(err));
+      setStage("error");
+    }
+  }
+
   return (
     <div className="max-w-2xl mx-auto">
       <Card className="p-6">
         <div className="flex items-start gap-4 mb-4">
           <div className="h-12 w-12 rounded-2xl bg-emerald-50 flex items-center justify-center text-2xl shadow-sm">
-            ✅
+            🎚
           </div>
           <div className="flex-1">
             <h2 className="text-xl font-bold tracking-tight text-slate-900">
-              Try a dictation
+              Mic calibration & test
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Final check — should feel natural
+              Two quick samples so Wisspa knows your mic's normal levels
             </p>
           </div>
         </div>
+
         <p className="text-sm text-slate-700 leading-relaxed mb-4">
-          Click into the box below, then hold <Kbd>Cmd</Kbd>+<Kbd>Shift</Kbd>+
-          <Kbd>Space</Kbd>, say something, and release. Wisspa should clean it
-          up and paste it here.
+          We'll record 2 seconds of silence, then 2.5 seconds of you saying{" "}
+          <strong>"hello, hello, hello"</strong>. Wisspa uses the difference to
+          decide when a recording was really silent (so we never feed dead air
+          to the transcriber).
         </p>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Click here, then dictate…"
-          rows={6}
-          className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-mono text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
-        />
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 mb-4">
+          {stage === "idle" && (
+            <button
+              onClick={runCalibration}
+              className="rounded-lg bg-wisspa-gradient px-4 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110"
+            >
+              Start calibration
+            </button>
+          )}
+          {stage === "ambient" && (
+            <div className="flex items-center gap-3 text-sm">
+              <Spinner /> Recording 2s of silence — please stay quiet…
+            </div>
+          )}
+          {stage === "speech" && (
+            <div className="flex items-center gap-3 text-sm">
+              <Spinner /> Now say <strong>"hello, hello, hello"</strong>…
+            </div>
+          )}
+          {stage === "done" && (
+            <div className="space-y-2 text-sm">
+              <div className="font-semibold text-emerald-700">
+                ✓ Calibration saved
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-xs">
+                <Stat label="Ambient peak" value={ambientPeak?.toFixed(1) ?? "—"} />
+                <Stat label="Speech peak" value={speechPeak?.toFixed(1) ?? "—"} />
+                <Stat label="Speech bytes/s" value={bytesPerSecond?.toLocaleString() ?? "—"} />
+              </div>
+              <button
+                onClick={runCalibration}
+                className="mt-1 text-xs underline decoration-dotted text-slate-600 hover:text-slate-900"
+              >
+                Re-run calibration
+              </button>
+            </div>
+          )}
+          {stage === "error" && (
+            <div className="space-y-2 text-sm">
+              <div className="text-red-600 font-medium">
+                Calibration failed: {error}
+              </div>
+              <button
+                onClick={runCalibration}
+                className="rounded-lg bg-wisspa-gradient px-3 py-1.5 text-xs font-semibold text-white"
+              >
+                Try again
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <p className="text-xs text-slate-500 leading-relaxed mb-2">
+            Optional final check: click into the box below, hold{" "}
+            <Kbd>Cmd</Kbd>+<Kbd>Shift</Kbd>+<Kbd>Space</Kbd>, dictate something
+            normally, release. Cleaned text should land here.
+          </p>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Click here, then dictate…"
+            rows={4}
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-mono text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          />
+        </div>
+
         <p className="text-xs text-slate-500 mt-4 leading-relaxed">
           Click <strong className="text-slate-700">Finish setup</strong> below
-          when you're ready. You can reopen this wizard later from Settings →
-          About.
+          when you're ready. You can re-run calibration any time from
+          Settings → General.
         </p>
       </Card>
     </div>

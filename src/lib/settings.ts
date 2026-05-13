@@ -2,6 +2,23 @@ import { invoke } from "@tauri-apps/api/core";
 
 export type RecordingMode = "press_and_hold" | "toggle";
 export type Theme = "system" | "light" | "dark";
+export type MicSensitivity = "off" | "low" | "medium" | "high";
+
+export const SENSITIVITY_MULTIPLIER: Record<MicSensitivity, number> = {
+  off: 0, // 0 == disable silence guard entirely (sentinel value)
+  low: 0.5,
+  medium: 1.0,
+  high: 2.0,
+};
+
+export const DEFAULT_SILENCE_PEAK = 6;
+export const DEFAULT_MIN_BYTES_PER_SECOND = 2000;
+
+export type MicCalibration = {
+  silence_peak: number;
+  min_bytes_per_second: number;
+  calibrated_at: number;
+};
 
 export type Settings = {
   version: number;
@@ -12,6 +29,7 @@ export type Settings = {
     play_sounds: boolean;
     sound_volume: number;
     theme: Theme;
+    mic_sensitivity: MicSensitivity;
   };
   hotkeys: {
     dictation: string;
@@ -29,6 +47,7 @@ export type Settings = {
   cleanup_llm: { provider: string; model: string };
   prompt_llm: { provider: string; model: string };
   onboarding_completed: boolean;
+  mic_calibration: MicCalibration | null;
 };
 
 export const HOTKEY_ACTIONS = ["dictation", "action", "prompt", "cancel"] as const;
@@ -136,4 +155,37 @@ export async function clearHistory(): Promise<void> {
 
 export async function exportHistoryCsv(): Promise<string> {
   return await invoke<string>("export_history_csv");
+}
+
+export async function reportSilentRecording(
+  mode: string,
+  durationMs: number,
+  peakAmplitude: number,
+  bytes: number,
+): Promise<void> {
+  await invoke("report_silent_recording", {
+    mode,
+    durationMs,
+    peakAmplitude,
+    bytes,
+  });
+}
+
+/**
+ * Resolve effective silence thresholds for the current recording, applying
+ * the user's sensitivity multiplier on top of their calibration (or the
+ * baked-in defaults).  Returns null when sensitivity is "off" — silence guard
+ * is skipped entirely in that mode.
+ */
+export function resolveSilenceThresholds(
+  settings: Settings | null,
+): { peak: number; bytesPerSecond: number } | null {
+  const sens = settings?.general.mic_sensitivity ?? "medium";
+  if (sens === "off") return null;
+  const multiplier = SENSITIVITY_MULTIPLIER[sens] ?? 1;
+  const cal = settings?.mic_calibration ?? null;
+  const peak = (cal?.silence_peak ?? DEFAULT_SILENCE_PEAK) * multiplier;
+  const bytesPerSecond =
+    (cal?.min_bytes_per_second ?? DEFAULT_MIN_BYTES_PER_SECOND) * multiplier;
+  return { peak, bytesPerSecond };
 }
