@@ -27,14 +27,20 @@ pub async fn run<R: Runtime>(
 ) -> Result<DictationOutcome> {
     let long_transcript = raw_transcript.chars().count() > 2000;
 
-    let (active_app, app_detected) = match app_detector::frontmost_app_name().await {
-        Ok(name) => (name, true),
-        Err(e) => {
-            log::warn!("frontmost app detect failed, using fallback context: {e:#}");
-            ("a macOS app".to_string(), false)
-        }
+    // Prefer the press-time snapshot (taken when the user's intended app
+    // was still focused); fall back to a live detection if the snapshot
+    // didn't complete in time.
+    let (active_app, app_detected) = match app_detector::take_target_app() {
+        Some(name) => (name, true),
+        None => match app_detector::frontmost_app_name().await {
+            Ok(name) => (name, true),
+            Err(e) => {
+                log::warn!("frontmost app detect failed, using fallback context: {e:#}");
+                ("a macOS app".to_string(), false)
+            }
+        },
     };
-    log::info!("active app: {active_app}");
+    log::info!("target app: {active_app}");
 
     let (final_text, cleaned) =
         match llm::haiku_cleanup_dictation(anthropic_api_key, raw_transcript, &active_app).await {
@@ -45,7 +51,7 @@ pub async fn run<R: Runtime>(
             }
         };
 
-    injector::inject_text(app, &final_text).await?;
+    injector::inject_text(app, &final_text, Some(&active_app)).await?;
 
     Ok(DictationOutcome {
         inserted: final_text,

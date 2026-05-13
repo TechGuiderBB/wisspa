@@ -107,21 +107,9 @@ export default function AboutTab() {
         )}
       </Section>
 
-      <Section title="Stack">
+      <Section title="Platform">
         <ul className="text-xs space-y-1 text-neutral-700">
-          <li>
-            <span className="font-semibold">STT:</span> Groq Whisper (
-            <code className="font-mono text-[11px]">whisper-large-v3-turbo</code>)
-          </li>
-          <li>
-            <span className="font-semibold">Cleanup:</span> Claude Haiku 4.5
-          </li>
-          <li>
-            <span className="font-semibold">Prompt rewrites:</span> Claude Sonnet 4.6
-          </li>
-          <li>
-            <span className="font-semibold">Target:</span> macOS 13+ on Apple Silicon
-          </li>
+          <li>macOS 13 or later · Apple Silicon</li>
         </ul>
       </Section>
     </div>

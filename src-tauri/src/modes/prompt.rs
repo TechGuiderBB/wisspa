@@ -23,15 +23,29 @@ pub async fn run<R: Runtime>(
     let settings = settings_store::load(app).unwrap_or_default();
     let pm = &settings.prompt_mode;
 
+    // Press-time snapshot wins: this is what the user was focused on when
+    // they pressed the hotkey, even if another app (Perplexity) stole focus
+    // by sharing the same global shortcut.
+    let snapshot = app_detector::take_target_app();
     let (active_app, manual_override_used) = match pm.manual_app_override.as_deref() {
         Some(name) if !name.is_empty() => (name.to_string(), true),
-        _ => match app_detector::frontmost_app_name().await {
-            Ok(name) => (name, false),
-            Err(e) => {
-                log::warn!("frontmost app detect failed: {e:#}");
-                ("Generic".to_string(), false)
-            }
+        _ => match snapshot {
+            Some(name) => (name, false),
+            None => match app_detector::frontmost_app_name().await {
+                Ok(name) => (name, false),
+                Err(e) => {
+                    log::warn!("frontmost app detect failed: {e:#}");
+                    ("Generic".to_string(), false)
+                }
+            },
         },
+    };
+    let inject_target = if manual_override_used {
+        // Manual override is used as a Sonnet format hint, not necessarily an
+        // app to activate. Don't bring it forward.
+        None
+    } else {
+        Some(active_app.clone())
     };
     log::info!(
         "prompt mode → app={active_app} (override={manual_override_used})"
@@ -79,7 +93,7 @@ pub async fn run<R: Runtime>(
         tokio::time::sleep(Duration::from_secs(pm.preview_timeout_seconds as u64)).await;
     }
 
-    injector::inject_text(app, &rewritten).await?;
+    injector::inject_text(app, &rewritten, inject_target.as_deref()).await?;
 
     Ok(PromptOutcome {
         inserted: rewritten,

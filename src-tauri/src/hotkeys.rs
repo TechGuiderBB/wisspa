@@ -63,6 +63,7 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
             match (action.as_str(), event.state()) {
                 ("dictation", ShortcutState::Pressed) => {
                     log::info!("dictation hotkey pressed");
+                    crate::app_detector::snapshot_target_app_now();
                     show_overlay(app);
                     let _ = app.emit(EVENT_MODE, "dictation");
                     let _ = app.emit(EVENT_START, ());
@@ -74,6 +75,7 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 }
                 ("action", ShortcutState::Pressed) => {
                     log::info!("action hotkey pressed");
+                    crate::app_detector::snapshot_target_app_now();
                     show_overlay(app);
                     let _ = app.emit(EVENT_MODE, "action");
                     let _ = app.emit(EVENT_START, ());
@@ -85,6 +87,7 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 }
                 ("prompt", ShortcutState::Pressed) => {
                     log::info!("prompt hotkey pressed");
+                    crate::app_detector::snapshot_target_app_now();
                     show_overlay(app);
                     let _ = app.emit(EVENT_MODE, "prompt");
                     let _ = app.emit(EVENT_START, ());
@@ -96,6 +99,7 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 }
                 ("cancel", ShortcutState::Pressed) => {
                     log::info!("cancel hotkey pressed");
+                    crate::app_detector::clear_target_app();
                     hide_overlay(app);
                     let _ = app.emit(EVENT_CANCEL, ());
                 }
