@@ -1,0 +1,21 @@
+.env
+
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Claude Code
+.claude/
