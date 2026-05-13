@@ -19,12 +19,19 @@ pub fn accessibility_trusted() -> bool {
     true
 }
 
-/// Inject `text` into the focused app by:
+/// Inject `text` into the user's intended target app by:
 /// 1. Saving the current clipboard text (best-effort).
 /// 2. Writing `text` to the clipboard.
-/// 3. Simulating Cmd+V.
-/// 4. After ~200ms, restoring the previous clipboard content.
-pub async fn inject_text<R: Runtime>(app: &AppHandle<R>, text: &str) -> Result<()> {
+/// 3. If `target_app` is set, re-activating it (in case another app stole
+///    focus when our global hotkey fired — e.g. Perplexity intercepting
+///    Cmd+Shift+P alongside Wisspa).
+/// 4. Simulating Cmd+V.
+/// 5. After ~250ms, restoring the previous clipboard content.
+pub async fn inject_text<R: Runtime>(
+    app: &AppHandle<R>,
+    text: &str,
+    target_app: Option<&str>,
+) -> Result<()> {
     if text.is_empty() {
         return Ok(());
     }
@@ -49,6 +56,17 @@ pub async fn inject_text<R: Runtime>(app: &AppHandle<R>, text: &str) -> Result<(
     clipboard
         .write_text(text.to_string())
         .context("clipboard write_text failed")?;
+
+    if let Some(name) = target_app {
+        log::info!("inject step 2b: re-activating target app '{name}'");
+        if let Err(e) = crate::app_detector::activate_app(name).await {
+            log::warn!("activate_app({name}) failed (continuing anyway): {e:#}");
+        }
+        // Give the OS a moment to bring the app forward and shift keyboard
+        // focus into its focused field. Without this Cmd+V can land before
+        // the activation completes.
+        tokio::time::sleep(Duration::from_millis(120)).await;
+    }
 
     log::info!("inject step 3: dispatching Cmd+V via AppleScript");
     send_cmd_v_applescript().await.context("Cmd+V dispatch failed")?;

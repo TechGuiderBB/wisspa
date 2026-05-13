@@ -28,46 +28,114 @@ const DEFAULTS: Settings["hotkeys"] = {
 };
 
 export default function HotkeysTab({ settings, patch }: Props) {
-  const captureCount = useRef(0);
+  // Only one row can be capturing at a time. `activeAction` tracks which.
+  const [activeAction, setActiveAction] = useState<HotkeyAction | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<HotkeyAction, string>>>({});
+  // Live preview of modifiers currently held during capture.
+  const [previewParts, setPreviewParts] = useState<string[]>([]);
 
-  async function beginCapture() {
-    captureCount.current += 1;
-    if (captureCount.current === 1) {
+  // Pause global shortcuts whenever any row is capturing so the keys reach
+  // the webview rather than firing dictation / action / prompt.
+  useEffect(() => {
+    if (activeAction === null) return;
+    let cancelled = false;
+    (async () => {
       try {
         await pauseHotkeys();
       } catch (err) {
         console.error("pauseHotkeys failed:", err);
       }
-    }
-  }
-
-  async function endCapture() {
-    captureCount.current = Math.max(0, captureCount.current - 1);
-    if (captureCount.current === 0) {
-      try {
-        await resumeHotkeys();
-      } catch (err) {
-        console.error("resumeHotkeys failed:", err);
+      if (cancelled) {
+        try {
+          await resumeHotkeys();
+        } catch (e) {
+          console.error("resumeHotkeys (cancelled) failed:", e);
+        }
       }
-    }
-  }
-
-  useEffect(() => {
+    })();
     return () => {
-      if (captureCount.current > 0) {
-        captureCount.current = 0;
-        void resumeHotkeys();
-      }
+      cancelled = true;
+      void resumeHotkeys().catch((e) => console.error("resumeHotkeys failed:", e));
     };
-  }, []);
+  }, [activeAction]);
+
+  // Document-level keydown listener decoupled from button focus.  This is
+  // what fixes the "Cmd press steals focus" problem — macOS may move the
+  // menu-bar highlight on modifier press, so we can't rely on the button
+  // staying focused.
+  useEffect(() => {
+    if (activeAction === null) return;
+
+    const handler = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Esc with no modifiers cancels capture without committing.
+      if (
+        e.code === "Escape" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.shiftKey
+      ) {
+        setActiveAction(null);
+        setPreviewParts([]);
+        return;
+      }
+
+      const parts: string[] = [];
+      if (e.metaKey) parts.push("CmdOrCtrl");
+      if (e.ctrlKey && !e.metaKey) parts.push("Control");
+      if (e.altKey) parts.push("Alt");
+      if (e.shiftKey) parts.push("Shift");
+
+      const key = normalizeKey(e.code, e.key);
+      if (!key) return;
+      const isModifierOnly = [
+        "Meta",
+        "Control",
+        "Alt",
+        "Shift",
+        "CmdOrCtrl",
+      ].includes(key);
+
+      if (isModifierOnly) {
+        // Update preview so the user sees Cmd / Shift / etc. registering.
+        setPreviewParts(parts);
+        return;
+      }
+      parts.push(key);
+
+      const combo = parts.join("+");
+      const action = activeAction;
+      commit(action, combo);
+    };
+
+    document.addEventListener("keydown", handler, { capture: true });
+    return () =>
+      document.removeEventListener("keydown", handler, { capture: true });
+  }, [activeAction]);
+
+  async function commit(action: HotkeyAction, combo: string) {
+    patch({ [action]: combo } as Partial<Settings["hotkeys"]>);
+    setActiveAction(null);
+    setPreviewParts([]);
+    try {
+      await updateHotkey(action, combo);
+      setErrors((prev) => ({ ...prev, [action]: undefined }));
+    } catch (err) {
+      setErrors((prev) => ({ ...prev, [action]: String(err) }));
+    }
+  }
 
   async function resetDefaults() {
-    patch(DEFAULTS);
     for (const a of HOTKEY_ACTIONS) {
+      patch({ [a]: DEFAULTS[a] } as Partial<Settings["hotkeys"]>);
       try {
         await updateHotkey(a, DEFAULTS[a]);
       } catch (err) {
         console.error(`reset ${a} failed:`, err);
+        setErrors((prev) => ({ ...prev, [a]: String(err) }));
       }
     }
   }
@@ -77,11 +145,16 @@ export default function HotkeysTab({ settings, patch }: Props) {
       {HOTKEY_ACTIONS.map((action) => (
         <HotkeyRow
           key={action}
-          action={action}
+          label={LABELS[action]}
           combo={settings.hotkeys[action]}
-          onChange={(combo) => patch({ [action]: combo } as Partial<Settings["hotkeys"]>)}
-          beginCapture={beginCapture}
-          endCapture={endCapture}
+          capturing={activeAction === action}
+          previewParts={activeAction === action ? previewParts : []}
+          error={errors[action]}
+          onStart={() => setActiveAction(action)}
+          onCancel={() => {
+            setActiveAction(null);
+            setPreviewParts([]);
+          }}
         />
       ))}
 
@@ -96,103 +169,79 @@ export default function HotkeysTab({ settings, patch }: Props) {
       </div>
 
       <p className="text-xs text-neutral-500 pt-2 leading-relaxed">
-        Click a row, then press your combo. Single keys (e.g. <code>F18</code>,{" "}
-        <code>F19</code>) work great for push-and-hold — just one key, no
-        modifiers. Press <kbd className="rounded border px-1">Esc</kbd> while
-        capturing to cancel.
+        Click <em>Change</em>, then press your combo. Single keys (e.g.{" "}
+        <code>F18</code>, <code>F19</code>) work great for push-and-hold — no
+        modifier needed. Press <kbd className="rounded border px-1 bg-white">Esc</kbd>{" "}
+        while capturing to cancel.
       </p>
     </div>
   );
 }
 
 function HotkeyRow({
-  action,
+  label,
   combo,
-  onChange,
-  beginCapture,
-  endCapture,
+  capturing,
+  previewParts,
+  error,
+  onStart,
+  onCancel,
 }: {
-  action: HotkeyAction;
+  label: string;
   combo: string;
-  onChange: (combo: string) => void;
-  beginCapture: () => Promise<void>;
-  endCapture: () => Promise<void>;
+  capturing: boolean;
+  previewParts: string[];
+  error: string | undefined;
+  onStart: () => void;
+  onCancel: () => void;
 }) {
-  const [capturing, setCapturing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function startCapture() {
-    setError(null);
-    await beginCapture();
-    setCapturing(true);
-  }
-
-  async function stopCapture() {
-    setCapturing(false);
-    await endCapture();
-  }
-
-  async function onKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
-    if (!capturing) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    // Allow Esc to cancel cleanly without committing.
-    if (e.code === "Escape" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
-      await stopCapture();
-      return;
-    }
-
-    const parts: string[] = [];
-    if (e.metaKey) parts.push("CmdOrCtrl");
-    if (e.ctrlKey && !e.metaKey) parts.push("Control");
-    if (e.altKey) parts.push("Alt");
-    if (e.shiftKey) parts.push("Shift");
-
-    const key = normalizeKey(e.code, e.key);
-    if (!key) return;
-    if (["Meta", "Control", "Alt", "Shift", "CmdOrCtrl"].includes(key)) {
-      // Modifier-only press; wait for a real key.
-      return;
-    }
-    parts.push(key);
-
-    const newCombo = parts.join("+");
-    onChange(newCombo);
-    try {
-      await updateHotkey(action, newCombo);
-      setError(null);
-    } catch (err) {
-      setError(String(err));
-    }
-    await stopCapture();
-  }
-
-  async function onBlur() {
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  // Re-focus the capture indicator when capturing starts.  The document-level
+  // listener handles input either way; this is just for visual focus styling.
+  useEffect(() => {
     if (capturing) {
-      await stopCapture();
+      buttonRef.current?.focus();
     }
-  }
+  }, [capturing]);
 
   return (
     <div className="grid grid-cols-[200px_1fr] items-center gap-4">
-      <div className="text-sm text-neutral-700">{LABELS[action]}</div>
-      <div>
-        <button
-          type="button"
-          onClick={() => void startCapture()}
-          onBlur={() => void onBlur()}
-          onKeyDown={onKeyDown}
-          className={`min-w-[240px] rounded-md border px-3 py-1.5 text-sm font-mono text-left transition-colors ${
+      <div className="text-sm text-neutral-700">{label}</div>
+      <div className="flex items-center gap-2">
+        <div
+          ref={buttonRef as unknown as React.RefObject<HTMLDivElement>}
+          tabIndex={-1}
+          className={`min-w-[240px] rounded-md border px-3 py-1.5 text-sm font-mono select-none ${
             capturing
               ? "border-accent bg-blue-50 text-accent ring-2 ring-accent/30"
-              : "border-neutral-300 bg-white hover:border-neutral-400"
+              : "border-neutral-300 bg-white text-slate-800"
           }`}
         >
-          {capturing ? "Press a combo…" : combo}
-        </button>
-        {error && <div className="mt-1 text-xs text-red-600">{error}</div>}
+          {capturing
+            ? previewParts.length > 0
+              ? `${previewParts.join("+")}+…`
+              : "Press a combo…"
+            : combo}
+        </div>
+        {capturing ? (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onStart}
+            className="rounded-md bg-wisspa-gradient px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:brightness-110"
+          >
+            Change
+          </button>
+        )}
       </div>
+      {error && <div className="col-start-2 text-xs text-red-600 mt-1">{error}</div>}
     </div>
   );
 }
