@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import {
   getPermissions,
   getSettings,
@@ -9,9 +11,19 @@ import {
   type PermissionsSnapshot,
 } from "../../lib/settings";
 
+type UpdateState =
+  | { kind: "idle" }
+  | { kind: "checking" }
+  | { kind: "uptodate" }
+  | { kind: "available"; version: string; notes: string | null }
+  | { kind: "downloading"; progress: number }
+  | { kind: "ready" }
+  | { kind: "error"; message: string };
+
 export default function AboutTab() {
   const [perms, setPerms] = useState<PermissionsSnapshot | null>(null);
   const [cal, setCal] = useState<MicCalibration | null>(null);
+  const [update, setUpdate] = useState<UpdateState>({ kind: "idle" });
 
   async function refresh() {
     try {
@@ -29,6 +41,50 @@ export default function AboutTab() {
     return () => clearInterval(id);
   }, []);
 
+  async function checkForUpdates() {
+    setUpdate({ kind: "checking" });
+    try {
+      const result = await check();
+      if (!result) {
+        setUpdate({ kind: "uptodate" });
+        return;
+      }
+      setUpdate({
+        kind: "available",
+        version: result.version,
+        notes: result.body ?? null,
+      });
+    } catch (err) {
+      setUpdate({ kind: "error", message: String(err) });
+    }
+  }
+
+  async function downloadAndInstall() {
+    try {
+      const result = await check();
+      if (!result) {
+        setUpdate({ kind: "uptodate" });
+        return;
+      }
+      let downloaded = 0;
+      let total = 0;
+      setUpdate({ kind: "downloading", progress: 0 });
+      await result.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          total = event.data.contentLength ?? 0;
+        } else if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          const pct = total > 0 ? Math.round((downloaded / total) * 100) : 0;
+          setUpdate({ kind: "downloading", progress: pct });
+        }
+      });
+      setUpdate({ kind: "ready" });
+      await relaunch();
+    } catch (err) {
+      setUpdate({ kind: "error", message: String(err) });
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="rounded-xl bg-wisspa-gradient text-white p-5 shadow-lg">
@@ -44,6 +100,30 @@ export default function AboutTab() {
           </div>
         </div>
       </div>
+
+      <Section title="Updates">
+        <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3 flex items-center gap-3">
+          <div className="flex-1 text-xs text-neutral-700">
+            <UpdateLabel state={update} />
+          </div>
+          {update.kind === "available" ? (
+            <button
+              onClick={downloadAndInstall}
+              className="rounded-md bg-wisspa-gradient px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:brightness-110"
+            >
+              Install v{update.version}
+            </button>
+          ) : (
+            <button
+              onClick={checkForUpdates}
+              disabled={update.kind === "checking" || update.kind === "downloading"}
+              className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {update.kind === "checking" ? "Checking…" : "Check for updates"}
+            </button>
+          )}
+        </div>
+      </Section>
 
       <Section title="Permissions">
         <div className="rounded-lg border border-neutral-200 bg-white divide-y">
@@ -114,6 +194,30 @@ export default function AboutTab() {
       </Section>
     </div>
   );
+}
+
+function UpdateLabel({ state }: { state: UpdateState }) {
+  switch (state.kind) {
+    case "idle":
+      return <span>You're on v0.1.0. Check for newer releases.</span>;
+    case "checking":
+      return <span>Checking for updates…</span>;
+    case "uptodate":
+      return <span className="text-emerald-700">You're on the latest version.</span>;
+    case "available":
+      return (
+        <span>
+          <span className="font-semibold text-slate-900">v{state.version} available.</span>{" "}
+          {state.notes && <span className="text-neutral-500">{state.notes.slice(0, 80)}…</span>}
+        </span>
+      );
+    case "downloading":
+      return <span>Downloading update… {state.progress}%</span>;
+    case "ready":
+      return <span className="text-emerald-700">Installed. Relaunching…</span>;
+    case "error":
+      return <span className="text-red-600">{state.message}</span>;
+  }
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
