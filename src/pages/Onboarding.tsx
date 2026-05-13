@@ -3,7 +3,6 @@ import {
   API_KEY_NAMES,
   API_PROVIDERS,
   ApiProvider,
-  PermissionPane,
   PermissionsSnapshot,
   PermissionStatus,
   completeOnboarding,
