@@ -1,0 +1,114 @@
+name: release
+
+# Push a tag like `v0.1.1` to cut a release. The workflow builds the .dmg,
+# signs it with the Tauri update key, and publishes both the .dmg and the
+# `latest.json` manifest that installed users will fetch from the updater
+# plugin's configured endpoint.
+#
+# Required GitHub Actions secrets (set in repo settings → Secrets):
+#   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tauri/wisspa-updater.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  blank if generated with -p ""
+#
+# Apple Developer ID notarisation is wired up but commented out until the
+# Developer Program account is active. Once you have it, fill in:
+#   APPLE_CERTIFICATE                base64 of the signed .p12 cert
+#   APPLE_CERTIFICATE_PASSWORD       export password used when creating .p12
+#   APPLE_SIGNING_IDENTITY           e.g. "Developer ID Application: Your Name (TEAMID)"
+#   APPLE_ID                         Apple ID email
+#   APPLE_PASSWORD                   app-specific password from appleid.apple.com
+#   APPLE_TEAM_ID                    your Apple developer team ID
+# Then uncomment the env block below.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.1)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build, sign, publish (macOS aarch64)
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-release-
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build, sign, and publish release artifacts
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Tauri update signing — required.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # API keys passed through at build time so the bundled binary doesn't
+          # need a separate .env at install time. These secrets are NOT shipped
+          # in the .dmg — they're only used during `pnpm tauri build` when the
+          # bundle inlines whatever environment the build sees, which in our
+          # design is just used as a dev-time fallback. End users will paste
+          # their own keys via the API Keys settings tab on first launch.
+          # (Listed here for parity with local dev; safe to omit.)
+          # GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          #
+          # Apple Developer ID notarisation — uncomment once Apple account is live:
+          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # APPLE_ID: ${{ secrets.APPLE_ID }}
+          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Wisspa ${{ github.ref_name }}"
+          releaseBody: |
+            Auto-built release. See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
+
+            ### Update channel
+            Existing installs will auto-update via Settings → About → Check for updates.
+
+            ### First-time install
+            Download `Wisspa_*_aarch64.dmg`, open it, drag Wisspa to Applications.
+            macOS 13+ on Apple Silicon required.
+          releaseDraft: true
+          prerelease: false
+          # The aarch64-apple-darwin target produces the binary Apple Silicon
+          # Macs need. (Universal builds add Intel x86_64 — not needed per PRD.)
+          args: --target aarch64-apple-darwin
+
+      - name: Surface manifest path in logs
+        if: success()
+        run: |
+          echo "::notice::Updater manifest expected at:"
+          echo "::notice::https://github.com/${{ github.repository }}/releases/latest/download/latest.json"
