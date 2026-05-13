@@ -1,0 +1,14 @@
+id: search_google
+name: "Search Google"
+description: "Opens a Google search in the default browser"
+triggers:
+  - "search Google for"
+  - "google"
+type: open_url
+command: "https://www.google.com/search?q={query}"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Searching Google for {query}"
+failure_feedback: "Could not open browser"
+enabled: true

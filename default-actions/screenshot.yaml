@@ -1,0 +1,17 @@
+id: screenshot
+name: "Interactive Screenshot to Clipboard"
+description: "Triggers macOS interactive screenshot, copies result to clipboard"
+triggers:
+  - "screenshot"
+  - "take a screenshot"
+  - "screen grab"
+  - "capture screen"
+type: shell
+command: "screencapture -i -c"
+working_dir: null
+requires_permissions:
+  - screen_recording
+destructive: false
+success_feedback: "Screenshot captured to clipboard"
+failure_feedback: "Screenshot failed"
+enabled: true

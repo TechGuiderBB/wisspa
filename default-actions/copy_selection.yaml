@@ -1,0 +1,14 @@
+id: copy_selection
+name: "Copy Selection"
+description: "Sends Cmd+C to copy current selection"
+triggers:
+  - "copy that"
+  - "copy this"
+type: keystroke
+command: "cmd+c"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Copied"
+failure_feedback: "Copy failed"
+enabled: true

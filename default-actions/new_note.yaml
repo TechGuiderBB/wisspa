@@ -1,0 +1,14 @@
+id: new_note
+name: "New Voice Note"
+description: "Appends the spoken note to ~/Documents/voice-notes.md"
+triggers:
+  - "new note"
+  - "make a note"
+type: shell
+command: "echo \"{query}\" >> ~/Documents/voice-notes.md"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Note saved"
+failure_feedback: "Could not save note"
+enabled: true

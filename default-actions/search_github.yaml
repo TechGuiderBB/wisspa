@@ -1,0 +1,13 @@
+id: search_github
+name: "Search GitHub"
+description: "Opens a GitHub repo search in the default browser"
+triggers:
+  - "search GitHub for"
+type: open_url
+command: "https://github.com/search?q={query}&type=repositories"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Searching GitHub for {query}"
+failure_feedback: "Could not open browser"
+enabled: true
