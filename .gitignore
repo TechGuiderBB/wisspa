@@ -1,4 +1,6 @@
 .env
+.env.local
+.env.*.local
 
 # macOS
 .DS_Store
@@ -8,9 +10,15 @@ node_modules/
 dist/
 .vite/
 
+# TypeScript build artifacts
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js
+
 # Rust / Tauri
 src-tauri/target/
 src-tauri/Cargo.lock
+src-tauri/gen/
 
 # Editor
 .vscode/
@@ -19,3 +27,6 @@ src-tauri/Cargo.lock
 
 # Claude Code
 .claude/
+
+# Logs
+*.log

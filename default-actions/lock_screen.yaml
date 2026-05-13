@@ -1,0 +1,14 @@
+id: lock_screen
+name: "Lock Screen"
+description: "Locks the macOS screen"
+triggers:
+  - "lock screen"
+  - "lock my mac"
+type: keystroke
+command: "ctrl+cmd+q"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Screen locked"
+failure_feedback: "Could not lock screen"
+enabled: true

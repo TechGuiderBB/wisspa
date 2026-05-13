@@ -1,0 +1,13 @@
+id: search_youtube
+name: "Search YouTube"
+description: "Opens a YouTube search in the default browser"
+triggers:
+  - "search YouTube for"
+type: open_url
+command: "https://www.youtube.com/results?search_query={query}"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Searching YouTube for {query}"
+failure_feedback: "Could not open browser"
+enabled: true

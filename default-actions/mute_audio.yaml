@@ -1,0 +1,14 @@
+id: mute_audio
+name: "Mute Audio"
+description: "Mutes the system output volume"
+triggers:
+  - "mute"
+  - "mute audio"
+type: applescript
+command: "set volume with output muted"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Audio muted"
+failure_feedback: "Could not mute audio"
+enabled: true

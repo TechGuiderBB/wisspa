@@ -1,0 +1,14 @@
+id: paste
+name: "Paste"
+description: "Sends Cmd+V to paste clipboard contents"
+triggers:
+  - "paste"
+  - "paste it"
+type: keystroke
+command: "cmd+v"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Pasted"
+failure_feedback: "Paste failed"
+enabled: true

@@ -1,0 +1,13 @@
+id: open_app
+name: "Open Application"
+description: "Opens an application by name"
+triggers:
+  - "open"
+type: open_app
+command: "{query}"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Opening {query}"
+failure_feedback: "Could not open {query}"
+enabled: true

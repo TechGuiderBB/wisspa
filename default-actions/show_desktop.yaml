@@ -1,0 +1,13 @@
+id: show_desktop
+name: "Show Desktop"
+description: "Reveals the desktop (Mission Control gesture)"
+triggers:
+  - "show desktop"
+type: keystroke
+command: "fn+f11"
+working_dir: null
+requires_permissions: []
+destructive: false
+success_feedback: "Showing desktop"
+failure_feedback: "Could not show desktop"
+enabled: true

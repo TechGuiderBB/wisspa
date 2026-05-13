@@ -1,0 +1,15 @@
+id: screenshot_to_file
+name: "Interactive Screenshot to File"
+description: "Triggers macOS interactive screenshot, saves PNG to ~/Desktop"
+triggers:
+  - "screenshot to file"
+  - "save screenshot"
+type: shell
+command: "screencapture -i ~/Desktop/screenshot-$(date +%s).png"
+working_dir: null
+requires_permissions:
+  - screen_recording
+destructive: false
+success_feedback: "Screenshot saved to Desktop"
+failure_feedback: "Screenshot failed"
+enabled: true

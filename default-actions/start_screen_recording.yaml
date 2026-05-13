@@ -1,0 +1,15 @@
+id: start_screen_recording
+name: "Start Screen Recording"
+description: "Opens macOS screen-capture HUD"
+triggers:
+  - "start screen recording"
+  - "record screen"
+type: keystroke
+command: "cmd+shift+5"
+working_dir: null
+requires_permissions:
+  - screen_recording
+destructive: false
+success_feedback: "Screen recording HUD opened"
+failure_feedback: "Could not open screen recording HUD"
+enabled: true

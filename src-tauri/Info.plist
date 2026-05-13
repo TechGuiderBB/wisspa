@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Wisspa needs microphone access to transcribe your voice.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Wisspa uses Apple Events to detect the focused app and run AppleScript actions.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Wisspa uses screen capture for screenshot actions.</string>
+</dict>
+</plist>
