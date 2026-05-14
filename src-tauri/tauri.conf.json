@@ -97,7 +97,13 @@
     "longDescription": "Wisspa transcribes speech, executes voice commands, and rewrites rough intent into structured AI prompts.",
     "macOS": {
       "minimumSystemVersion": "13.0",
-      "entitlements": "entitlements.plist"
+      "entitlements": "entitlements.plist",
+      "dmg": {
+        "background": "icons/dmg-background.png",
+        "windowSize": { "width": 560, "height": 360 },
+        "appPosition": { "x": 160, "y": 180 },
+        "applicationFolderPosition": { "x": 400, "y": 180 }
+      }
     }
   },
   "plugins": {
