@@ -93,6 +93,7 @@ pub async fn execute<R: Runtime>(
     query: &str,
 ) -> Result<ExecOutcome> {
     let resolved = resolve_placeholders(app, &action.command, query).await;
+    let env = settings_env(app);
 
     log::info!(
         "executing action '{}' ({:?}) → {}",
@@ -102,7 +103,7 @@ pub async fn execute<R: Runtime>(
     );
 
     match action.action_type {
-        ActionType::Shell => run_shell(&resolved, action.working_dir.as_deref()).await,
+        ActionType::Shell => run_shell(&resolved, action.working_dir.as_deref(), &env).await,
         ActionType::Applescript => run_applescript(&resolved).await,
         ActionType::OpenUrl => open_url(&resolved).await,
         ActionType::OpenApp => open_app(&resolved).await,
@@ -129,12 +130,19 @@ fn render(template: &str, resolved: &str, query: &str) -> String {
         .replace("{resolved}", resolved)
 }
 
-async fn run_shell(command: &str, working_dir: Option<&str>) -> Result<()> {
+async fn run_shell(
+    command: &str,
+    working_dir: Option<&str>,
+    env: &[(String, String)],
+) -> Result<()> {
     check_shell(command)?;
     let mut cmd = tokio::process::Command::new("/bin/sh");
     cmd.args(["-c", command]);
     if let Some(dir) = working_dir {
         cmd.current_dir(shellexpand_home(dir));
+    }
+    for (k, v) in env {
+        cmd.env(k, v);
     }
     let output = cmd.output().await.context("spawn shell")?;
     if !output.status.success() {
@@ -145,6 +153,18 @@ async fn run_shell(command: &str, working_dir: Option<&str>) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Surface a few settings as env vars so YAML actions can reference them
+/// (e.g. `$WISSPA_NOTES_PATH`). Tilde-expanded; safe even if settings.json
+/// is missing.
+fn settings_env<R: Runtime>(app: &AppHandle<R>) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Ok(settings) = crate::settings_store::load(app) {
+        let path = shellexpand_home(&settings.general.notes_path);
+        env.push(("WISSPA_NOTES_PATH".to_string(), path));
+    }
+    env
 }
 
 async fn run_applescript(script: &str) -> Result<()> {

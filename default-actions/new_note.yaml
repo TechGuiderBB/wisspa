@@ -1,11 +1,16 @@
 id: new_note
 name: "New Voice Note"
-description: "Appends the spoken note to ~/Documents/voice-notes.md"
+description: "Appends the spoken note to the file configured in Settings → Actions"
 triggers:
   - "new note"
+  - "new notes"
   - "make a note"
+  - "take a note"
+  - "knew note"
+  - "keynote"
+  - "you note"
 type: shell
-command: "echo \"{query}\" >> ~/Documents/voice-notes.md"
+command: 'if [ -d "$WISSPA_NOTES_PATH" ]; then F="$WISSPA_NOTES_PATH/Inbox.md"; else F="$WISSPA_NOTES_PATH"; fi; mkdir -p "$(dirname "$F")" && printf -- "- %s\n" "{query}" >> "$F"'
 working_dir: null
 requires_permissions: []
 destructive: false

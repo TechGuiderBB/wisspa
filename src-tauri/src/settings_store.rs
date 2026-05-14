@@ -30,10 +30,18 @@ pub struct General {
     pub theme: String, // "system" | "light" | "dark"
     #[serde(default = "default_mic_sensitivity")]
     pub mic_sensitivity: String, // "off" | "low" | "medium" | "high"
+    /// Destination file for the `new_note` voice action. Tilde-expanded
+    /// before use; parent directory auto-created on first write.
+    #[serde(default = "default_notes_path")]
+    pub notes_path: String,
 }
 
 fn default_mic_sensitivity() -> String {
     "medium".to_string()
+}
+
+fn default_notes_path() -> String {
+    "~/Documents/voice-notes.md".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +92,7 @@ impl Default for Settings {
                 sound_volume: 0.5,
                 theme: "system".to_string(),
                 mic_sensitivity: "medium".to_string(),
+                notes_path: default_notes_path(),
             },
             hotkeys: Hotkeys {
                 // Phase 1/2 ships with safe combos; PRD §4.2 defaults to `fn` etc.
