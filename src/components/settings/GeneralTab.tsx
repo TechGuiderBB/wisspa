@@ -114,16 +114,19 @@ export default function GeneralTab({ settings, patch }: Props) {
         />
       </Row>
 
-      <Row label="Sound on start / stop">
+      <Row
+        label="Recording sounds"
+        hint="Soft chimes when a recording starts, stops, is cancelled, or times out."
+      >
         <Toggle
           checked={g.play_sounds}
           onChange={(v) => patch({ play_sounds: v })}
-          label="Sound on start / stop"
+          label="Recording sounds"
         />
       </Row>
 
       {g.play_sounds && (
-        <Row label="Volume">
+        <Row label="Sound volume">
           <Slider
             value={g.sound_volume}
             min={0}
