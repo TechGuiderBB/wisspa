@@ -9,6 +9,20 @@ pub struct ActionOutcome {
     pub suggestions: Vec<String>,
 }
 
+/// Actions whose payload is meaningless without a `{query}` body. Used to
+/// short-circuit before executing an empty command (e.g. "take a note"
+/// said alone would append an empty bullet).
+fn needs_query(action_id: &str) -> bool {
+    matches!(
+        action_id,
+        "new_note"
+            | "open_app"
+            | "search_google"
+            | "search_github"
+            | "search_youtube"
+    )
+}
+
 /// Phase 4 pipeline:
 ///   transcript → match against registry → execute matched action.
 ///   No match → return Top-N suggestions for the toast.
@@ -25,6 +39,20 @@ pub async fn run<R: Runtime>(app: &AppHandle<R>, transcript: &str) -> Result<Act
 
     match matcher::find_match(trimmed) {
         Some(m) => {
+            // Guard: if the trigger matched but no content followed (e.g.
+            // user said "take a note" with nothing after), refuse to run
+            // rather than write an empty bullet.
+            if m.query.trim().is_empty() && needs_query(&m.action.id) {
+                return Ok(ActionOutcome {
+                    message: format!(
+                        "\"{}\" needs something to follow the trigger — try \"new note buy bread\".",
+                        m.action.name
+                    ),
+                    success: false,
+                    matched_action_id: Some(m.action.id.clone()),
+                    suggestions: Vec::new(),
+                });
+            }
             let exec = executor::execute(app, &m.action, &m.query).await?;
             Ok(ActionOutcome {
                 message: exec.message,

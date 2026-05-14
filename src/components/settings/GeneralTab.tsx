@@ -1,4 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  disable as disableAutostart,
+  enable as enableAutostart,
+  isEnabled as isAutostartEnabled,
+} from "@tauri-apps/plugin-autostart";
 import {
   getSettings,
   saveSettings,
@@ -22,6 +27,33 @@ export default function GeneralTab({ settings, patch }: Props) {
     "idle" | "ambient" | "speech" | "done" | "error"
   >("idle");
   const [calError, setCalError] = useState<string | null>(null);
+
+  // Sync the toggle against the OS-level Login Items state on mount in
+  // case they drifted apart (e.g. user removed Wisspa via System Settings).
+  useEffect(() => {
+    (async () => {
+      try {
+        const actual = await isAutostartEnabled();
+        if (actual !== g.launch_on_login) {
+          patch({ launch_on_login: actual });
+        }
+      } catch (err) {
+        console.warn("autostart isEnabled failed:", err);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function setLaunchOnLogin(value: boolean) {
+    patch({ launch_on_login: value });
+    try {
+      if (value) await enableAutostart();
+      else await disableAutostart();
+    } catch (err) {
+      console.error("autostart toggle failed:", err);
+      patch({ launch_on_login: !value });
+    }
+  }
 
   async function recalibrate() {
     setCalError(null);
@@ -58,7 +90,7 @@ export default function GeneralTab({ settings, patch }: Props) {
       <Row label="Launch on login">
         <Toggle
           checked={g.launch_on_login}
-          onChange={(v) => patch({ launch_on_login: v })}
+          onChange={(v) => void setLaunchOnLogin(v)}
           label="Launch on login"
         />
       </Row>
