@@ -14,6 +14,7 @@ mod modes;
 mod permissions;
 mod selection;
 mod settings_store;
+mod sounds;
 mod stt;
 mod toast;
 mod tray;

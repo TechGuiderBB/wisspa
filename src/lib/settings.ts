@@ -31,6 +31,8 @@ export type Settings = {
     theme: Theme;
     mic_sensitivity: MicSensitivity;
     notes_path: string;
+    max_recording_seconds: number;
+    long_paste_threshold: number;
   };
   hotkeys: {
     dictation: string;
@@ -185,6 +187,10 @@ export async function reportSilentRecording(
     peakAmplitude,
     bytes,
   });
+}
+
+export async function reportRecordingTimeout(maxSeconds: number): Promise<void> {
+  await invoke("report_recording_timeout", { maxSeconds });
 }
 
 /**

@@ -64,42 +64,49 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 ("dictation", ShortcutState::Pressed) => {
                     log::info!("dictation hotkey pressed");
                     crate::app_detector::snapshot_target_app_now();
+                    crate::sounds::play(app, crate::sounds::Cue::Start);
                     show_overlay(app);
                     let _ = app.emit(EVENT_MODE, "dictation");
                     let _ = app.emit(EVENT_START, ());
                 }
                 ("dictation", ShortcutState::Released) => {
                     log::info!("dictation hotkey released");
+                    crate::sounds::play(app, crate::sounds::Cue::Stop);
                     hide_overlay(app);
                     let _ = app.emit(EVENT_STOP, ());
                 }
                 ("action", ShortcutState::Pressed) => {
                     log::info!("action hotkey pressed");
                     crate::app_detector::snapshot_target_app_now();
+                    crate::sounds::play(app, crate::sounds::Cue::Start);
                     show_overlay(app);
                     let _ = app.emit(EVENT_MODE, "action");
                     let _ = app.emit(EVENT_START, ());
                 }
                 ("action", ShortcutState::Released) => {
                     log::info!("action hotkey released");
+                    crate::sounds::play(app, crate::sounds::Cue::Stop);
                     hide_overlay(app);
                     let _ = app.emit(EVENT_STOP, ());
                 }
                 ("prompt", ShortcutState::Pressed) => {
                     log::info!("prompt hotkey pressed");
                     crate::app_detector::snapshot_target_app_now();
+                    crate::sounds::play(app, crate::sounds::Cue::Start);
                     show_overlay(app);
                     let _ = app.emit(EVENT_MODE, "prompt");
                     let _ = app.emit(EVENT_START, ());
                 }
                 ("prompt", ShortcutState::Released) => {
                     log::info!("prompt hotkey released");
+                    crate::sounds::play(app, crate::sounds::Cue::Stop);
                     hide_overlay(app);
                     let _ = app.emit(EVENT_STOP, ());
                 }
                 ("cancel", ShortcutState::Pressed) => {
                     log::info!("cancel hotkey pressed");
                     crate::app_detector::clear_target_app();
+                    crate::sounds::play(app, crate::sounds::Cue::Cancel);
                     hide_overlay(app);
                     let _ = app.emit(EVENT_CANCEL, ());
                 }
