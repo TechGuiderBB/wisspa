@@ -7,7 +7,10 @@ name: release
 #
 # Required GitHub Actions secrets (set in repo settings → Secrets):
 #   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.tauri/wisspa-updater.key
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  blank if generated with -p ""
+#
+# (No password env var needed — our signing key was generated with -p "".
+# If you ever rotate to a password-protected key, add a
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD secret and pipe it through env: below.)
 #
 # Apple Developer ID notarisation is wired up but commented out until the
 # Developer Program account is active. Once you have it, fill in:
@@ -71,7 +74,6 @@ jobs:
         env:
           # Tauri update signing — required.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # API keys passed through at build time so the bundled binary doesn't
           # need a separate .env at install time. These secrets are NOT shipped
           # in the .dmg — they're only used during `pnpm tauri build` when the
