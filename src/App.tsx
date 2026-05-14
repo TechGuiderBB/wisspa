@@ -10,6 +10,7 @@ import {
 import { processAudio, type RecordingMode } from "./lib/tauri";
 import {
   getSettings,
+  reportRecordingTimeout,
   reportSilentRecording,
   resolveSilenceThresholds,
   type Settings,
@@ -54,6 +55,9 @@ function Runtime() {
   // user gets feedback even if they missed the macOS notification banner.
   const [statusFlash, setStatusFlash] = useState<StatusFlash | null>(null);
   const flashTimerRef = useRef<number | null>(null);
+  // Auto-stop timer for in-progress recordings — guardrail against
+  // accidentally long captures (hotkey held while typing, etc).
+  const recordingTimerRef = useRef<number | null>(null);
   // Mode the in-flight recording is for. Set from `wisspa://recording-mode`
   // emitted by Rust at hotkey-press time; read at hotkey-release time.
   const modeRef = (Runtime as unknown as { _modeRef?: { current: RecordingMode } })
@@ -119,6 +123,24 @@ function Runtime() {
         setError(null);
         await startRecording();
         setRecording(true);
+        // Arm the max-recording-duration timer so a stuck-down hotkey
+        // (or modifier+key combo held during typing) can't capture
+        // unbounded audio.
+        const maxSec = settingsRef.current?.general.max_recording_seconds ?? 30;
+        if (recordingTimerRef.current !== null) {
+          clearTimeout(recordingTimerRef.current);
+        }
+        recordingTimerRef.current = window.setTimeout(async () => {
+          recordingTimerRef.current = null;
+          console.warn(`recording exceeded ${maxSec}s cap — auto-stopping`);
+          cancelRecording();
+          setRecording(false);
+          try {
+            await reportRecordingTimeout(maxSec);
+          } catch (err) {
+            console.error("reportRecordingTimeout failed:", err);
+          }
+        }, maxSec * 1000);
       } catch (err) {
         const msg =
           err instanceof MicTrackUnhealthyError
@@ -130,6 +152,10 @@ function Runtime() {
     }).then(track);
 
     listen(STOP_EVENT, async () => {
+      if (recordingTimerRef.current !== null) {
+        clearTimeout(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
       try {
         const result = await stopRecording();
         setRecording(false);
@@ -172,6 +198,10 @@ function Runtime() {
     }).then(track);
 
     listen(CANCEL_EVENT, () => {
+      if (recordingTimerRef.current !== null) {
+        clearTimeout(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
       cancelRecording();
       setRecording(false);
     }).then(track);

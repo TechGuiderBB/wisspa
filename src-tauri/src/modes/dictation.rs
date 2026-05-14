@@ -12,6 +12,10 @@ pub struct DictationOutcome {
     pub cleaned: bool,
     /// True when the raw transcript exceeded 2000 chars per PRD §5.1.
     pub long_transcript: bool,
+    /// True when Haiku's output diverged enough from the raw transcript
+    /// that we discarded it and used the raw text instead (guardrail
+    /// against Haiku answering questions / rewriting prompts).
+    pub haiku_diverged: bool,
 }
 
 /// Phase 2 dictation pipeline:
@@ -42,12 +46,21 @@ pub async fn run<R: Runtime>(
     };
     log::info!("target app: {active_app}");
 
-    let (final_text, cleaned) =
+    let (final_text, cleaned, haiku_diverged) =
         match llm::haiku_cleanup_dictation(anthropic_api_key, raw_transcript, &active_app).await {
-            Ok(cleaned) => (cleaned, true),
+            Ok(haiku_out) => {
+                if diverges_from_raw(raw_transcript, &haiku_out) {
+                    log::warn!(
+                        "Haiku output diverged from raw transcript — falling back to raw. raw={raw_transcript:?} haiku={haiku_out:?}"
+                    );
+                    (raw_transcript.to_string(), false, true)
+                } else {
+                    (haiku_out, true, false)
+                }
+            }
             Err(e) => {
                 log::error!("Haiku cleanup failed, falling back to raw: {e:#}");
-                (raw_transcript.to_string(), false)
+                (raw_transcript.to_string(), false, false)
             }
         };
 
@@ -58,5 +71,56 @@ pub async fn run<R: Runtime>(
         app_detected,
         cleaned,
         long_transcript,
+        haiku_diverged,
     })
+}
+
+/// Decide whether Haiku's output is faithful to the raw Whisper transcript.
+/// True = Haiku went off-script (answered a question, rewrote into a
+/// template, added content) and we should fall back to the raw text.
+///
+/// Heuristics:
+///   1. Length blow-up: cleaned > 1.5 × raw and absolute delta ≥ 30 chars.
+///   2. Word-overlap collapse: <50% of raw's content words appear in cleaned.
+fn diverges_from_raw(raw: &str, cleaned: &str) -> bool {
+    let raw_trim = raw.trim();
+    let cleaned_trim = cleaned.trim();
+    if cleaned_trim.is_empty() || raw_trim.is_empty() {
+        return false;
+    }
+
+    let raw_len = raw_trim.chars().count();
+    let cleaned_len = cleaned_trim.chars().count();
+    let len_ratio = cleaned_len as f32 / raw_len as f32;
+    let absolute_delta = (cleaned_len as i32 - raw_len as i32).abs();
+    if len_ratio > 1.5 && absolute_delta >= 30 {
+        return true;
+    }
+
+    let raw_words = content_words(raw_trim);
+    if raw_words.is_empty() {
+        return false;
+    }
+    let cleaned_lower = cleaned_trim.to_lowercase();
+    let kept: usize = raw_words
+        .iter()
+        .filter(|w| cleaned_lower.contains(w.as_str()))
+        .count();
+    let coverage = kept as f32 / raw_words.len() as f32;
+    coverage < 0.5
+}
+
+/// Tokenize into lowercased "content words" — alphanumeric, length ≥ 3,
+/// skipping common stop-words that are too easy to overlap incidentally.
+fn content_words(s: &str) -> Vec<String> {
+    const STOP: &[&str] = &[
+        "the", "and", "for", "with", "you", "your", "are", "was", "but", "this",
+        "that", "have", "has", "had", "not", "what", "when", "where", "why", "how",
+        "from", "into", "out", "about", "can", "could", "would", "should",
+    ];
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 3)
+        .map(|w| w.to_lowercase())
+        .filter(|w| !STOP.contains(&w.as_str()))
+        .collect()
 }
