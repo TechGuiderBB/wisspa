@@ -165,11 +165,46 @@ pub fn start_watcher<R: Runtime>(app: AppHandle<R>) -> Result<()> {
     Ok(())
 }
 
-/// First-launch initialisation: seed defaults, load, start watcher.
+/// First-launch initialisation: seed defaults, migrate, load, start watcher.
 pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
     seed_defaults_if_empty(app)?;
+    migrate_known_actions(app)?;
     let dir = user_actions_dir(app)?;
     load_all(&dir)?;
     start_watcher(app.clone())?;
+    Ok(())
+}
+
+/// Migrate previously-shipped action templates to their current versions
+/// when the user's copy is byte-for-byte identical to the prior default —
+/// i.e. they haven't customised it. User edits are never touched.
+fn migrate_known_actions<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
+    let user_dir = user_actions_dir(app)?;
+
+    // (filename, [past-default contents], current-default contents)
+    // When the user's file equals any of `past_defaults`, overwrite with `current`.
+    let migrations: &[(&str, &[&str], &str)] = &[(
+        "new_note.yaml",
+        &[
+            // Original v0.1.0 hardcoded path; now superseded by
+            // $WISSPA_NOTES_PATH so the path is configurable in Settings.
+            "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to ~/Documents/voice-notes.md\"\ntriggers:\n  - \"new note\"\n  - \"make a note\"\ntype: shell\ncommand: \"echo \\\"{query}\\\" >> ~/Documents/voice-notes.md\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
+        ],
+        "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to the file configured in Settings → Actions\"\ntriggers:\n  - \"new note\"\n  - \"make a note\"\ntype: shell\ncommand: 'mkdir -p \"$(dirname \"$WISSPA_NOTES_PATH\")\" && printf -- \"- %s\\n\" \"{query}\" >> \"$WISSPA_NOTES_PATH\"'\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
+    )];
+
+    for (filename, past_defaults, current) in migrations {
+        let path = user_dir.join(filename);
+        let Ok(existing) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if existing == *current {
+            continue; // already on the latest
+        }
+        if past_defaults.iter().any(|d| existing == *d) {
+            log::info!("migrating actions/{filename} to current template");
+            let _ = std::fs::write(&path, current);
+        }
+    }
     Ok(())
 }

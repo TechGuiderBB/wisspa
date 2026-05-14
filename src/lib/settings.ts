@@ -30,6 +30,7 @@ export type Settings = {
     sound_volume: number;
     theme: Theme;
     mic_sensitivity: MicSensitivity;
+    notes_path: string;
   };
   hotkeys: {
     dictation: string;
@@ -155,6 +156,21 @@ export async function clearHistory(): Promise<void> {
 
 export async function exportHistoryCsv(): Promise<string> {
   return await invoke<string>("export_history_csv");
+}
+
+export type LoadedAction = {
+  id: string;
+  name: string;
+  description: string;
+  triggers: string[];
+  type: string;
+  command: string;
+  destructive: boolean;
+  enabled: boolean;
+};
+
+export async function listActions(): Promise<LoadedAction[]> {
+  return await invoke<LoadedAction[]>("list_actions");
 }
 
 export async function reportSilentRecording(
