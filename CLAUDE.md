@@ -259,12 +259,12 @@ No automated test suite in the Rust code as of this snapshot. CI runs:
 
 1. **Don't hide the `main` window.** WKWebView throttles JS in fully hidden windows, which breaks `MediaRecorder` and the audio path. The runtime window must stay visible — it's the dim pill at top-center (`DECISIONS.md` item 11).
 2. **Keychain prompts every rebuild in dev.** Each Rust rebuild creates a fresh unsigned binary that macOS treats as a new app. Put keys in `.env` while iterating; Keychain takes over in signed production builds.
-3. **`destructive: true` and `requires_permissions` are parsed but NOT enforced at execution time.** The PRD calls for a confirmation toast on destructive actions and a permission gate. Neither is wired up. See `actions/executor.rs::execute` and `WisspaWEB/docs/wisspa-product-current-state.md §1.2` for the delta.
-4. **The Haiku system prompt in code is longer than the one in `WISSPA_PRD.md §5.1`.** The code has an extra "CRITICAL: You are a text-cleanup function, NOT an assistant…" paragraph. **The code is authoritative; the PRD is out of date.**
-5. **Selected-text capture (Prompt Mode) uses a 280 ms post-`Cmd+C` wait.** Reliable for native apps and most editors; flaky for Slack, Notion, some browser tabs (`selection.rs`).
-6. **Hotkey reassignment temporarily unregisters all global shortcuts during capture** so the webview can receive the raw key event. Press `Esc` to cancel cleanly if you abort.
-7. **The pill follows the primary monitor.** Multi-display users should set their preferred display as primary in System Settings → Displays → Arrange.
-8. **`enigo` aborts the host process on macOS.** If you're tempted to switch `Cmd+V` injection back to `enigo` — don't. The abort bypasses `catch_unwind`. AppleScript via `osascript` is the macOS-blessed path.
+3. **Destructive action confirmation goes through the tray menu, not a toast.** The voice trigger does NOT execute a `destructive: true` action — it stores it as pending and surfaces `Confirm: <name>` + `Cancel pending action` items in the tray. 15-second auto-cancel timeout. The pending state replaces (not queues) when a second destructive trigger fires. See `actions/pending.rs` and `actions/executor.rs::execute`.
+4. **Selected-text capture (Prompt Mode) uses a 280 ms post-`Cmd+C` wait.** Reliable for native apps and most editors; flaky for Slack, Notion, some browser tabs (`selection.rs`).
+5. **Hotkey reassignment temporarily unregisters all global shortcuts during capture** so the webview can receive the raw key event. Press `Esc` to cancel cleanly if you abort.
+6. **The pill follows the primary monitor.** Multi-display users should set their preferred display as primary in System Settings → Displays → Arrange.
+7. **`enigo` aborts the host process on macOS.** If you're tempted to switch `Cmd+V` injection back to `enigo` — don't. The abort bypasses `catch_unwind`. AppleScript via `osascript` is the macOS-blessed path.
+8. **`show_desktop` default action ships broken.** It uses `fn+f11` but the AppleScript keystroke layer rejects the `fn` modifier (`actions/executor.rs::combo_to_applescript`). Tracked in `docs/v1-backlog.md`.
 
 ---
 
@@ -297,7 +297,7 @@ No automated test suite in the Rust code as of this snapshot. CI runs:
 |---|---|
 | `../WisspaWEB/CLAUDE.md` | **Workspace-wide context** — covers both repos together, cross-repo workflow, open decisions |
 | `README.md` | App overview, modes, hotkeys, troubleshooting |
-| `WISSPA_PRD.md` | Original product PRD (some sections out of date) |
+| `WISSPA_PRD.md` | Product PRD — reconciled against v0.1.0 code on 2026-05-16. Treat as the single source of truth for product spec. |
 | `DECISIONS.md` | Implementation choices and the reasoning behind them |
 | `LAUNCH.md` | Commercial launch plan |
-| `../WisspaWEB/docs/wisspa-product-current-state.md` | Authoritative product reference, sourced from this code |
+| `docs/v1-backlog.md` | v1 punch list (open items toward v1.0) |
