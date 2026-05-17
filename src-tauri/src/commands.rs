@@ -183,11 +183,8 @@ pub async fn report_silent_recording<R: Runtime>(
         duration_ms: Some(duration_ms),
         status: "cancelled".to_string(),
     });
-    toast::warn(
-        &app,
-        "No speech detected",
-        "Check your mic input — try again.",
-    );
+    // Surface only via the pill flash. The macOS banner was noisy and
+    // redundant on top of the in-app indicator.
     emit_status(&app, "no-speech", "No speech detected");
     Ok(())
 }
@@ -252,11 +249,6 @@ pub async fn process_audio<R: Runtime>(
 
     if transcript.is_empty() {
         log::warn!("empty transcript; no speech detected");
-        toast::warn(
-            &app,
-            "No speech detected",
-            "Whisper returned no text — try speaking up or closer to the mic.",
-        );
         emit_status(&app, "no-speech", "No speech detected");
         let _ = history::insert(history::NewEntry {
             mode: mode.clone(),
@@ -274,11 +266,6 @@ pub async fn process_audio<R: Runtime>(
     // hallucinate a chatbot response on top of the garbage).
     if looks_like_whisper_hallucination(&transcript) {
         log::warn!("suppressing likely Whisper hallucination: {transcript:?}");
-        toast::warn(
-            &app,
-            "No speech detected",
-            "Wisspa caught a known transcription hallucination — try again.",
-        );
         emit_status(&app, "no-speech", "No speech detected");
         let _ = history::insert(history::NewEntry {
             mode: mode.clone(),
