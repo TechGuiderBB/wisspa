@@ -323,7 +323,9 @@ async fn run_prompt_mode<R: Runtime>(
             } else {
                 format!("{preview} ({})", suffix.join(", "))
             };
-            toast::info(app, "Prompt inserted", &body);
+            // No success banner — the rewritten prompt appears in the focused
+            // app the moment it's pasted. Banner was redundant noise.
+            let _ = body;
             Ok(outcome.inserted)
         }
         Err(e) => {
@@ -342,13 +344,15 @@ async fn run_dictation_mode<R: Runtime>(
     let anthropic_key = state.anthropic_key();
     match dictation::run(app, &anthropic_key, transcript).await {
         Ok(outcome) => {
+            // Success path: the cleaned transcript appears in the focused app
+            // the moment it's pasted, so a macOS banner is redundant. Keep the
+            // raw/long warnings — those are meaningful state the user can't
+            // see in the pasted text alone.
             let preview = preview(&outcome.inserted);
             if !outcome.cleaned {
                 toast::warn(app, "Inserted (raw)", &format!("Cleanup unavailable — pasted raw. {preview}"));
             } else if outcome.long_transcript {
                 toast::warn(app, "Inserted (long)", &format!("Transcript >2000 chars. {preview}"));
-            } else {
-                toast::info(app, "Inserted", &preview);
             }
             Ok(outcome.inserted)
         }
