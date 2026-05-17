@@ -152,11 +152,16 @@ async fn check_permissions<R: Runtime>(
         .map(|m| m.label)
         .collect::<Vec<_>>()
         .join(", ");
+    let (noun, pronoun) = if missing.len() == 1 {
+        ("permission", "it")
+    } else {
+        ("permissions", "them")
+    };
     Some(ExecOutcome {
         success: false,
         message: format!(
-            "\"{}\" needs {} permission. Opening System Settings — grant it and try again.",
-            action.name, list
+            "\"{}\" needs {list} {noun}. Opening System Settings — grant {pronoun} and try again.",
+            action.name
         ),
     })
 }

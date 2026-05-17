@@ -45,8 +45,8 @@ fn show_overlay<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
         let _ = w.show();
     }
-    // Tray title/tooltip switches to the recording indicator alongside the
-    // overlay so the menu bar shows mic state even when the pill is occluded.
+    // Tray icon tints + tooltip swaps to the recording indicator alongside
+    // the overlay so the menu bar shows mic state even when the pill is occluded.
     crate::tray::set_recording_state(true);
 }
 

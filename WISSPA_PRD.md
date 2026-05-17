@@ -646,7 +646,7 @@ wisspa/
 
 ## 9. Visual Design
 
-- Menu bar icon: default window-icon glyph; while recording the title shows a red filled circle (`🔴`) and tooltip changes to "Wisspa — Recording…" so the user has an always-visible indicator even when the pill is occluded.
+- Menu bar icon: default window-icon glyph; while recording the glyph itself tints red (Tailwind red-500, generated at install time from the bundled RGBA) and tooltip changes to "Wisspa — Recording…" so the user has an always-visible indicator even when the pill is occluded.
 - Recording overlay: pill (220×56px) anchored to top-center of the **primary** monitor (multi-display users must set their preferred display as primary in System Settings → Displays → Arrange). Semi-transparent, undecorated, hosts the MediaRecorder webview, dismisses with fade.
 - Settings window: 820×600, native macOS chrome, tabbed sidebar layout (like Raycast settings).
 - Toasts: top-right, stack vertically, auto-dismiss with progress bar.
