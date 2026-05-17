@@ -115,6 +115,49 @@ pub async fn snapshot() -> PermissionsSnapshot {
     }
 }
 
+/// A permission an action declared in `requires_permissions:` that is not
+/// currently granted. `pane` is the argument for `open_settings_for`.
+#[derive(Debug, Clone, Serialize)]
+pub struct MissingPermission {
+    pub key: &'static str,
+    pub pane: &'static str,
+    pub label: &'static str,
+}
+
+/// Known permission keys an action YAML may list. Unknown keys are logged
+/// and ignored at check time rather than failing the action — we'd rather
+/// run the action than silently block on a typo'd key.
+const KNOWN_PERMS: &[(&str, &str, &str)] = &[
+    ("accessibility", "accessibility", "Accessibility"),
+    ("screen_recording", "screen_recording", "Screen Recording"),
+    ("automation", "automation", "Automation"),
+    ("microphone", "microphone", "Microphone"),
+];
+
+/// Check every permission the action declared and return the ones missing.
+/// Empty result means the action may proceed.
+pub async fn check_required(specs: &[String]) -> Vec<MissingPermission> {
+    let mut missing = Vec::new();
+    for spec in specs {
+        let key = spec.trim().to_lowercase();
+        let Some((k, pane, label)) = KNOWN_PERMS.iter().find(|(name, _, _)| *name == key) else {
+            log::warn!("requires_permissions: unknown key '{spec}' (ignored)");
+            continue;
+        };
+        let status = match *k {
+            "accessibility" => accessibility(),
+            "screen_recording" => screen_recording(),
+            "automation" => automation().await,
+            "microphone" => microphone(),
+            _ => continue,
+        };
+        if status != Status::Granted {
+            missing.push(MissingPermission { key: k, pane, label });
+        }
+    }
+    missing
+}
+
 /// Trigger the macOS Screen Recording permission prompt (only fires once if
 /// the app hasn't been granted yet; otherwise this is a no-op).
 pub fn request_screen_recording_access() {
