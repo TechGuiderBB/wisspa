@@ -49,17 +49,21 @@ jobs:
       - name: Install cargo-audit
         run: command -v cargo-audit >/dev/null || cargo install cargo-audit --locked
       - name: Audit Cargo.lock
-        # cargo-audit exits non-zero on vulnerabilities by default — that's
-        # the real-impact class we want to gate. Unmaintained and unsound
-        # advisories surface in the output as warnings but don't fail the
-        # build: the bulk of them in our graph (atk, gtk, gdk, gdkx11,
-        # cairo, pango, soup, proc-macro-error, etc.) come from Tauri's
-        # Linux GTK backend, which Wisspa never uses (macOS-only). Pinning
-        # `--deny unsound` was creating a moving target as the advisory DB
-        # grew. Vulnerabilities in real Wisspa deps will still fail.
+        # cargo-audit denies vulnerabilities AND unsound advisories by
+        # default. Vulnerabilities in real (Wisspa-reachable) deps remain a
+        # hard gate — good. Unsound advisories on Tauri's Linux GTK
+        # transitive deps are noise: Wisspa is macOS-only, those deps
+        # never get pulled into the actual binary.
+        #
+        # Each --ignore below is a Linux GTK transitive advisory unreachable
+        # from the macOS build. Revisit if upstream Tauri reshapes the dep
+        # tree or if any of these crates land on the macOS path.
+        # --ignore list (all Linux GTK transitive advisories, unreachable
+        # on the macOS build):
+        #   RUSTSEC-2024-0429  glib VariantStrIter unsoundness
         run: |
           cd src-tauri
-          cargo audit
+          cargo audit --ignore RUSTSEC-2024-0429
 
   npm-audit:
     name: pnpm audit
