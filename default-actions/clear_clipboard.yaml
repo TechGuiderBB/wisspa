@@ -7,7 +7,7 @@ type: shell
 command: "pbcopy < /dev/null"
 working_dir: null
 requires_permissions: []
-destructive: false
+destructive: true
 success_feedback: "Clipboard cleared"
 failure_feedback: "Could not clear clipboard"
 enabled: true
