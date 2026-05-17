@@ -146,23 +146,31 @@ async fn check_permissions<R: Runtime>(
     if missing.is_empty() {
         return None;
     }
-    let _ = crate::permissions::open_settings_for(missing[0].pane);
+    // Deep-link the first missing item that has a real settings pane. An
+    // empty pane means the YAML declared an unknown permission key; there's
+    // nowhere to send the user, but the gate still fails closed below.
+    if let Some(target) = missing.iter().find(|m| !m.pane.is_empty()) {
+        let _ = crate::permissions::open_settings_for(target.pane);
+    }
     let list = missing
         .iter()
-        .map(|m| m.label)
+        .map(|m| m.label.as_str())
         .collect::<Vec<_>>()
         .join(", ");
+    let has_unknown = missing.iter().any(|m| m.pane.is_empty());
     let (noun, pronoun) = if missing.len() == 1 {
         ("permission", "it")
     } else {
         ("permissions", "them")
     };
+    let suffix = if has_unknown {
+        format!(" Fix the action YAML's requires_permissions list.")
+    } else {
+        format!(" Opening System Settings — grant {pronoun} and try again.")
+    };
     Some(ExecOutcome {
         success: false,
-        message: format!(
-            "\"{}\" needs {list} {noun}. Opening System Settings — grant {pronoun} and try again.",
-            action.name
-        ),
+        message: format!("\"{}\" needs {list} {noun}.{suffix}", action.name),
     })
 }
 
