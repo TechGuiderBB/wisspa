@@ -1,27 +1,120 @@
 use anyhow::Result;
+use std::sync::{Mutex, OnceLock};
 use tauri::{
+    image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
-    AppHandle, Manager, Wry,
+    tray::{TrayIcon, TrayIconBuilder},
+    AppHandle, Manager, Runtime, Wry,
 };
 
 const TRAY_ID: &str = "wisspa-tray";
+const TOOLTIP_IDLE: &str = "Wisspa";
+const TOOLTIP_RECORDING: &str = "Wisspa — Recording…";
+// Tailwind red-500. Tinting the mic glyph itself (rather than adding a
+// separate emoji or dot) keeps the menu bar uncluttered while still giving an
+// unmistakable "live" cue alongside the existing Wisspa pill.
+const RECORDING_TINT: [u8; 3] = [239, 68, 68];
+
+fn tray_handle() -> &'static Mutex<Option<TrayIcon>> {
+    static H: OnceLock<Mutex<Option<TrayIcon>>> = OnceLock::new();
+    H.get_or_init(|| Mutex::new(None))
+}
+
+/// Cached (rgba, width, height) for the idle and recording icons. Built once
+/// at `install` from the bundled window icon; the recording variant is the
+/// same glyph with every non-transparent pixel replaced by `RECORDING_TINT`.
+fn icon_cache() -> &'static Mutex<Option<IconPair>> {
+    static C: OnceLock<Mutex<Option<IconPair>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+struct IconPair {
+    idle: (Vec<u8>, u32, u32),
+    recording: (Vec<u8>, u32, u32),
+}
+
+fn tint_red(rgba: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rgba.len());
+    for chunk in rgba.chunks_exact(4) {
+        let a = chunk[3];
+        if a == 0 {
+            out.extend_from_slice(&[0, 0, 0, 0]);
+        } else {
+            out.extend_from_slice(&[RECORDING_TINT[0], RECORDING_TINT[1], RECORDING_TINT[2], a]);
+        }
+    }
+    out
+}
+
+/// Build the tray menu. When `pending_label` is Some, the menu grows two
+/// extra items at the top so the user can confirm or cancel a destructive
+/// action they just triggered by voice.
+fn build_menu<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    pending_label: Option<&str>,
+) -> Result<Menu<R>> {
+    let open_settings = MenuItem::with_id(
+        manager,
+        "open_settings",
+        "Open Settings…",
+        true,
+        None::<&str>,
+    )?;
+    let separator = PredefinedMenuItem::separator(manager)?;
+    let quit = MenuItem::with_id(manager, "quit", "Quit Wisspa", true, None::<&str>)?;
+
+    if let Some(label) = pending_label {
+        let confirm = MenuItem::with_id(
+            manager,
+            "confirm_pending",
+            format!("Confirm: {label}"),
+            true,
+            None::<&str>,
+        )?;
+        let cancel = MenuItem::with_id(
+            manager,
+            "cancel_pending",
+            "Cancel pending action",
+            true,
+            None::<&str>,
+        )?;
+        let sep_top = PredefinedMenuItem::separator(manager)?;
+        Ok(Menu::with_items(
+            manager,
+            &[&confirm, &cancel, &sep_top, &open_settings, &separator, &quit],
+        )?)
+    } else {
+        Ok(Menu::with_items(
+            manager,
+            &[&open_settings, &separator, &quit],
+        )?)
+    }
+}
 
 pub fn install(app: &tauri::App) -> Result<()> {
-    let open_settings = MenuItem::with_id(app, "open_settings", "Open Settings…", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Wisspa", true, None::<&str>)?;
-
-    let menu = Menu::with_items(app, &[&open_settings, &separator, &quit])?;
+    let menu = build_menu(app, None)?;
 
     let icon = app
         .default_window_icon()
         .ok_or_else(|| anyhow::anyhow!("no default window icon to use for tray"))?
         .clone();
 
-    TrayIconBuilder::with_id(TRAY_ID)
+    // Cache idle + red-tinted RGBA so `set_recording_state` can swap the
+    // tray icon without re-reading the bundled asset every transition.
+    let idle_rgba = icon.rgba().to_vec();
+    let (w, h) = (icon.width(), icon.height());
+    let pair = IconPair {
+        recording: (tint_red(&idle_rgba), w, h),
+        idle: (idle_rgba, w, h),
+    };
+    if let Ok(mut slot) = icon_cache().lock() {
+        *slot = Some(pair);
+    }
+
+    let tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(icon)
         .icon_as_template(false)
+        .tooltip(TOOLTIP_IDLE)
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app: &AppHandle<Wry>, event| {
@@ -29,13 +122,73 @@ pub fn install(app: &tauri::App) -> Result<()> {
             match event.id.as_ref() {
                 "open_settings" => open_settings_window(app),
                 "quit" => app.exit(0),
+                "confirm_pending" => {
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        crate::actions::pending::confirm_now(&app).await;
+                    });
+                }
+                "cancel_pending" => crate::actions::pending::cancel(app),
                 _ => {}
             }
         })
         .build(app)?;
 
+    match tray_handle().lock() {
+        Ok(mut slot) => *slot = Some(tray),
+        Err(_) => log::warn!("tray handle mutex poisoned at install; recording indicator will be inert"),
+    }
+
     log::info!("tray icon installed");
     Ok(())
+}
+
+/// Show or hide the "Confirm: <name>" + "Cancel pending action" items in
+/// the tray menu. Pass `Some(name)` when a destructive action is awaiting
+/// confirmation, `None` to restore the regular menu.
+///
+/// Failures to update the menu are logged but don't propagate — the worst
+/// case is that the tray UI doesn't reflect pending state. The action will
+/// still time out and clear itself.
+pub fn set_pending_confirmation<R: Runtime>(app: &AppHandle<R>, pending_label: Option<&str>) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        log::warn!("tray icon '{TRAY_ID}' not found; cannot update pending confirmation");
+        return;
+    };
+    let menu = match build_menu(app, pending_label) {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("could not rebuild tray menu for pending confirmation: {e:#}");
+            return;
+        }
+    };
+    if let Err(e) = tray.set_menu(Some(menu)) {
+        log::warn!("tray.set_menu failed: {e:#}");
+    }
+}
+
+/// Reflect mic-capture state in the menu-bar tray icon. Called from
+/// `hotkeys.rs` whenever the recording lifecycle starts or ends. Swaps the
+/// glyph between the default colour and a red-tinted copy so the existing
+/// mic icon itself doubles as the active indicator — no extra emoji or dot.
+pub fn set_recording_state(recording: bool) {
+    let Ok(tray_slot) = tray_handle().lock() else {
+        log::warn!("tray handle mutex poisoned; skipping state update");
+        return;
+    };
+    let Some(tray) = tray_slot.as_ref() else {
+        return;
+    };
+    let Ok(icon_slot) = icon_cache().lock() else {
+        return;
+    };
+    let Some(pair) = icon_slot.as_ref() else {
+        return;
+    };
+    let (rgba, w, h) = if recording { &pair.recording } else { &pair.idle };
+    let tooltip = if recording { TOOLTIP_RECORDING } else { TOOLTIP_IDLE };
+    let _ = tray.set_icon(Some(Image::new(rgba, *w, *h)));
+    let _ = tray.set_tooltip(Some(tooltip));
 }
 
 fn open_settings_window(app: &AppHandle<Wry>) {
