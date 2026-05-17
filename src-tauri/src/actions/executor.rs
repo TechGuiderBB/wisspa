@@ -93,35 +93,106 @@ pub async fn execute<R: Runtime>(
     query: &str,
 ) -> Result<ExecOutcome> {
     let resolved = resolve_placeholders(app, &action.command, query).await;
-    let env = settings_env(app);
 
+    if let Some(outcome) = check_permissions(app, action).await {
+        return Ok(outcome);
+    }
+
+    if action.destructive {
+        let id = crate::actions::pending::store(
+            action.clone(),
+            resolved.clone(),
+            query.to_string(),
+        );
+        crate::tray::set_pending_confirmation(app, Some(&action.name));
+        crate::actions::pending::schedule_timeout(app.clone(), id);
+        return Ok(ExecOutcome {
+            success: false,
+            message: format!(
+                "Confirm \"{}\" via the Wisspa tray menu within {}s.",
+                action.name,
+                crate::actions::pending::CONFIRMATION_TIMEOUT.as_secs()
+            ),
+        });
+    }
+
+    let env = settings_env(app);
+    Ok(dispatch(action, &resolved, query, &env).await)
+}
+
+/// Dispatch a pre-confirmed action. Skips the destructive gate (the user
+/// just confirmed via the tray) but re-checks permissions in case the user
+/// revoked something during the confirmation window.
+pub async fn run_confirmed<R: Runtime>(
+    app: &AppHandle<R>,
+    action: &Action,
+    resolved: &str,
+    query: &str,
+) -> ExecOutcome {
+    if let Some(outcome) = check_permissions(app, action).await {
+        return outcome;
+    }
+    let env = settings_env(app);
+    dispatch(action, resolved, query, &env).await
+}
+
+/// Returns Some(failure outcome) if any declared permission is missing —
+/// also deep-links the user to the matching System Settings pane.
+async fn check_permissions<R: Runtime>(
+    _app: &AppHandle<R>,
+    action: &Action,
+) -> Option<ExecOutcome> {
+    let missing = crate::permissions::check_required(&action.requires_permissions).await;
+    if missing.is_empty() {
+        return None;
+    }
+    let _ = crate::permissions::open_settings_for(missing[0].pane);
+    let list = missing
+        .iter()
+        .map(|m| m.label)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(ExecOutcome {
+        success: false,
+        message: format!(
+            "\"{}\" needs {} permission. Opening System Settings — grant it and try again.",
+            action.name, list
+        ),
+    })
+}
+
+async fn dispatch(
+    action: &Action,
+    resolved: &str,
+    query: &str,
+    env: &[(String, String)],
+) -> ExecOutcome {
     log::info!(
         "executing action '{}' ({:?}) → {}",
         action.id,
         action.action_type,
         resolved
     );
-
-    match action.action_type {
-        ActionType::Shell => run_shell(&resolved, action.working_dir.as_deref(), &env).await,
-        ActionType::Applescript => run_applescript(&resolved).await,
-        ActionType::OpenUrl => open_url(&resolved).await,
-        ActionType::OpenApp => open_app(&resolved).await,
-        ActionType::Keystroke => send_keystroke(&resolved).await,
-    }
-    .map(|()| ExecOutcome {
-        success: true,
-        message: render(&action.success_feedback, &resolved, query),
-    })
-    .or_else(|e| {
-        Ok(ExecOutcome {
+    let result = match action.action_type {
+        ActionType::Shell => run_shell(resolved, action.working_dir.as_deref(), env).await,
+        ActionType::Applescript => run_applescript(resolved).await,
+        ActionType::OpenUrl => open_url(resolved).await,
+        ActionType::OpenApp => open_app(resolved).await,
+        ActionType::Keystroke => send_keystroke(resolved).await,
+    };
+    match result {
+        Ok(()) => ExecOutcome {
+            success: true,
+            message: render(&action.success_feedback, resolved, query),
+        },
+        Err(e) => ExecOutcome {
             success: false,
             message: format!(
                 "{}: {e:#}",
-                render(&action.failure_feedback, &resolved, query)
+                render(&action.failure_feedback, resolved, query)
             ),
-        })
-    })
+        },
+    }
 }
 
 fn render(template: &str, resolved: &str, query: &str) -> String {
