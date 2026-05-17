@@ -18,8 +18,8 @@ Everything that needs to be true before paying customers can download Wisspa fro
 | Trial | **14 days, all-inclusive, no credit card required** |
 | Billing platform | LemonSqueezy (Merchant of Record — handles GST/VAT) |
 | API proxy | Cloudflare Worker + Cloudflare AI Gateway |
-| Code repo | `github.com/TechGuiderau/wisspa` (private) |
-| Distribution repo | `github.com/TechGuiderau/wisspa-releases` (public — to be created) |
+| Code repo | `github.com/TechGuiderBB/wisspa` (private) |
+| Distribution repo | `github.com/TechGuiderBB/wisspa-releases` (public — to be created) |
 | Code signing | Apple Developer ID (in progress) |
 | Source licensing | **Proprietary, all rights reserved** (see `LICENSE`). Source repo stays private; binary distributed via the public releases repo. Decided 2026-05-17. |
 | End-user licence | Terms of Use at `wisspa.app/legal/terms` (currently draft, pending lawyer review) |
@@ -86,18 +86,18 @@ Everything that needs to be true before paying customers can download Wisspa fro
 The `.dmg` is publicly hosted on a **separate public repo**, so the source code repo can stay private:
 
 ```
-github.com/TechGuiderau/wisspa-releases   (public, holds .dmg + latest.json)
-github.com/TechGuiderau/wisspa            (private, holds source)
+github.com/TechGuiderBB/wisspa-releases   (public, holds .dmg + latest.json)
+github.com/TechGuiderBB/wisspa            (private, holds source)
 ```
 
 **Public download URL** (after first release):
 ```
-https://github.com/TechGuiderau/wisspa-releases/releases/latest/download/Wisspa.dmg
+https://github.com/TechGuiderBB/wisspa-releases/releases/latest/download/Wisspa.dmg
 ```
 
 **Auto-updater endpoint** (already wired in `tauri.conf.json`, will switch to):
 ```
-https://github.com/TechGuiderau/wisspa-releases/releases/latest/download/latest.json
+https://github.com/TechGuiderBB/wisspa-releases/releases/latest/download/latest.json
 ```
 
 The `.dmg` is signed and notarised by Apple Developer ID (once the cert lands).
@@ -143,7 +143,7 @@ Items in priority order. Wisspa code work can run in parallel with this.
 ### Already done
 
 - [x] Domain `wisspa.app` registered
-- [x] GitHub org `TechGuiderau` exists
+- [x] GitHub org `TechGuiderBB` exists
 - [x] Wisspa source repo (private) on GitHub
 - [x] Tauri auto-updater plugin wired in app
 - [x] Update signing keypair generated (private key at `~/.tauri/wisspa-updater.key`, public key in `tauri.conf.json`)
@@ -159,7 +159,7 @@ Items in priority order. Wisspa code work can run in parallel with this.
    - Add 6 secrets to GitHub: `APPLE_CERTIFICATE` (base64 of `.p12`), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` (app-specific password from appleid.apple.com), `APPLE_TEAM_ID`
    - Uncomment the `APPLE_*` env block in `.github/workflows/release.yml`
 
-2. **Create `TechGuiderau/wisspa-releases` public repo** on GitHub
+2. **Create `TechGuiderBB/wisspa-releases` public repo** on GitHub
    - Empty repo, public, no README
    - I'll update `release.yml` to target this repo for binaries
 
@@ -183,7 +183,7 @@ Items in priority order. Wisspa code work can run in parallel with this.
 6. **Landing page at `wisspa.app`**
    - In progress. Brooke is building.
    - Required CTAs:
-     - **Download for Mac (free 14-day trial)** → `https://github.com/TechGuiderau/wisspa-releases/releases/latest/download/Wisspa.dmg`
+     - **Download for Mac (free 14-day trial)** → `https://github.com/TechGuiderBB/wisspa-releases/releases/latest/download/Wisspa.dmg`
      - **Subscribe — $15/mo** → LemonSqueezy checkout URL
    - Required sections: features, pricing, privacy (lean into "audio never leaves your Mac except to Whisper for STT"), support contact
 
