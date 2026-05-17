@@ -45,12 +45,16 @@ fn show_overlay<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
         let _ = w.show();
     }
+    // Tray icon tints + tooltip swaps to the recording indicator alongside
+    // the overlay so the menu bar shows mic state even when the pill is occluded.
+    crate::tray::set_recording_state(true);
 }
 
 fn hide_overlay<R: Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
         let _ = w.hide();
     }
+    crate::tray::set_recording_state(false);
 }
 
 pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
