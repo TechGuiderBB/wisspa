@@ -202,7 +202,11 @@ Production: `Console.app` → filter by `wisspa`. Most log lines are `INFO`-leve
 
 ## License
 
-WISSPA is being built for public release. The current v0.1.0 build is a public preview; final licensing for general distribution will be confirmed before v1.0 ships. Join the waitlist for launch updates.
+Wisspa is **proprietary, source-closed software**. Copyright © 2026 TechGuider. All rights reserved. See [`LICENSE`](LICENSE) for the full notice.
+
+No part of the source code is licensed for use, copying, modification, distribution, or sublicensing without prior written permission. Viewing the source (e.g. in a private GitHub mirror) does not grant any right to use it. The compiled application is licensed to end users on a subscription basis under the terms at [wisspa.app/legal/terms](https://wisspa.app/legal/terms).
+
+Commercial enquiries: [licensing@techguider.com.au](mailto:licensing@techguider.com.au)
 
 ---
 

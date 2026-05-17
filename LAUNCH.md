@@ -21,6 +21,8 @@ Everything that needs to be true before paying customers can download Wisspa fro
 | Code repo | `github.com/TechGuiderau/wisspa` (private) |
 | Distribution repo | `github.com/TechGuiderau/wisspa-releases` (public — to be created) |
 | Code signing | Apple Developer ID (in progress) |
+| Source licensing | **Proprietary, all rights reserved** (see `LICENSE`). Source repo stays private; binary distributed via the public releases repo. Decided 2026-05-17. |
+| End-user licence | Terms of Use at `wisspa.app/legal/terms` (currently draft, pending lawyer review) |
 
 ### Open decisions still to make
 

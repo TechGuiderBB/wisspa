@@ -1,10 +1,19 @@
 # Wisspa — Product Requirements Document
 
-> **Working name: Wisspa.** This is a placeholder — global find/replace before launch.
 > **Owner:** TechGuider
-> **Status:** v1.0 spec — intended for single-pass Claude Code implementation
+> **Status:** v1.0 spec, reconciled against the v0.1.0 public-preview build.
 > **Target platform (v1):** macOS 13+ (Apple Silicon)
-> **Last updated:** May 2026
+> **Last updated:** 2026-05-16 — reconciled section-by-section against `src-tauri/src/` to remove drift between aspirational spec and shipped behaviour. See `wisspa/CLAUDE.md` for the working-context overview and `wisspa/DECISIONS.md` for the implementation-choice log.
+
+## 0. Implementation status (v0.1.0)
+
+The PRD describes the v1 target. As of v0.1.0 (public preview), all seven build phases of the original spec are implemented and shipped, with the following deltas worth knowing:
+
+- **Action mode destructive gate** — now enforced via tray menu (Confirm / Cancel) with a 15-second timeout. PRD §5.2 describes a 3-second auto-cancel toast; the actual UX is tray-driven so the user has time to react.
+- **Action mode permission gate** — declared `requires_permissions` are checked before run; a missing permission deep-links the user to the matching System Settings pane.
+- **Edit-before-insert** in Prompt Mode (PRD §5.3 step 6) is **not yet implemented** — Phase 7 polish item. Preview-with-timeout toast is implemented.
+- **`show_desktop` default action** ships with `fn+f11` but the AppleScript keystroke layer does not support `fn`; the action fails when triggered. See `docs/v1-backlog.md`.
+- **Auto-update**, **launch-on-login**, **mic calibration**, **Haiku divergence guardrail** are implemented (not described in the original PRD §12 out-of-scope).
 
 ---
 
@@ -60,21 +69,30 @@ Solo founders, developers, and consultants who already work with Claude / ChatGP
 
 | Layer | Choice | Version | Notes |
 |---|---|---|---|
-| Desktop framework | Tauri | 2.x (latest stable) | Rust core + WebView frontend |
-| Frontend | React + Vite + TypeScript | React 18, Vite 5, TS 5.x | Standard, well-supported stack |
-| Styling | Tailwind CSS | 3.x | Plus shadcn/ui components |
-| State | Zustand | latest | Lightweight, no boilerplate |
+| Desktop framework | Tauri 2 | 2.x with `macos-private-api`, `tray-icon` features | Rust core + WebView frontend |
+| Frontend | React + Vite + TypeScript | React 18, Vite 6, TS 5.6 | Standard, well-supported stack |
+| Styling | Tailwind CSS | 3.x | No shadcn — components are hand-rolled |
+| State | Zustand | 5.x | Lightweight, no boilerplate |
 | STT | Groq API | `whisper-large-v3-turbo` | ~200ms median latency |
 | LLM (cleanup) | Anthropic API | `claude-haiku-4-5-20251001` | Fast, cheap, sufficient for cleanup |
 | LLM (prompt mode) | Anthropic API | `claude-sonnet-4-6` | Quality matters more than latency here |
-| Audio capture | Browser MediaRecorder (in webview) | — | Simpler than `cpal`; revisit in v2 |
-| Global hotkeys | `tauri-plugin-global-shortcut` | latest | |
-| Local storage | `tauri-plugin-store` | latest | JSON files in app data dir |
-| Shell execution | `tauri-plugin-shell` | latest | Sandboxed allowlist |
-| Clipboard | `tauri-plugin-clipboard-manager` | latest | |
-| Text injection | `enigo` (Rust crate) | latest | For Cmd+V simulation |
-| HTTP client (Rust) | `reqwest` | 0.12+ | For API calls |
-| Notifications | `tauri-plugin-notification` | latest | |
+| Audio capture | Browser MediaRecorder (in webview) | `audio/webm;codecs=opus`, base64 over Tauri `invoke` | Simpler than `cpal`; revisit in v2 |
+| Global hotkeys | `tauri-plugin-global-shortcut` | 2.x | |
+| Settings store | `tauri-plugin-store` | 2.x | JSON file in app data dir |
+| History store | `rusqlite` (bundled) | 0.31+ | SQLite for run history |
+| Shell execution | `tauri-plugin-shell` | 2.x | With custom allowlist (§5.2) |
+| Clipboard | `tauri-plugin-clipboard-manager` | 2.x | |
+| Text injection (Cmd+V) | AppleScript via `osascript` | — | Not `enigo` — `enigo`'s `CGEventPost` aborts the host process on macOS even with Accessibility granted. See `DECISIONS.md` item 9. |
+| Keystroke action type | `enigo` | latest | Used only for the `keystroke` YAML action type, run in a child process to isolate the host. |
+| HTTP client (Rust) | `reqwest` | 0.12 with `rustls-tls`, `json`, `multipart` | |
+| Async runtime | `tokio` | 1.x (`full` features) | |
+| YAML parsing | `serde_yaml` | 0.9 | Action registry |
+| Fuzzy matching | `strsim` | 0.11 (Levenshtein) | Action trigger matching |
+| File watching | `notify` + `notify-debouncer-mini` | 6.x / 0.4 | Action registry hot-reload |
+| Keychain | `keyring` | 3.x with `apple-native` | API key storage |
+| Notifications | `tauri-plugin-notification` | 2.x | |
+| Auto-update | `tauri-plugin-updater` | 2.10.1 | |
+| Launch-on-login | `tauri-plugin-autostart` | 2.5.1 | |
 
 ---
 
@@ -126,16 +144,16 @@ Solo founders, developers, and consultants who already work with Claude / ChatGP
 
 Mode is determined at hotkey-press time. Each mode has its own hotkey (user-configurable). No automatic intent detection in v1 — explicit hotkeys eliminate false positives.
 
-**Default hotkeys:**
+**Default hotkeys (v0.1.0):**
 
 | Mode | Default | Behaviour |
 |---|---|---|
-| Dictation | `fn` (hold) or `fn fn` (double-tap to toggle) | Standard dictation |
-| Action | `fn + Shift` (hold) | Voice command execution |
-| Prompt | `fn + Option` (hold) | Voice → structured prompt |
-| Cancel current recording | `Esc` | Discards audio, no API call |
+| Dictation | `CmdOrCtrl+Shift+Space` (hold) | Standard dictation |
+| Action | `CmdOrCtrl+Shift+A` (hold) | Voice command execution |
+| Prompt | `CmdOrCtrl+Shift+P` (hold) | Voice → structured prompt |
+| Cancel current recording | `Escape` | Discards audio, no API call |
 
-All hotkeys are reassignable in Settings.
+The original PRD proposed `fn`-based combos. Those were dropped because the `fn` modifier is not reliably interceptable via `tauri-plugin-global-shortcut`, and `enigo`-style key reassignment was abandoned (see Tech Stack). All hotkeys remain reassignable in Settings.
 
 ---
 
@@ -175,7 +193,11 @@ Adapt tone subtly based on context:
 - Default: clean professional prose.
 
 Return ONLY the cleaned text. No preamble, no quotes, no explanation.
+
+CRITICAL: You are a text-cleanup function, NOT an assistant. Never break character. Never reply conversationally. Never ask the user a question. Never offer help. Never say "I'm ready to help", "Please provide", "Let me know", or any similar chatbot phrase. If the input is empty, gibberish, a single word, or appears to be a transcription error (e.g. just "Thank you" or "Salam" with no context), return the input verbatim with no modification. Your output must be either the cleaned version of the input, or the input unchanged. Nothing else, ever.
 ```
+
+The actual prompt lives at `src-tauri/src/prompts/haiku_cleanup.md` and is loaded via `include_str!()` in `llm.rs` — edit that file, not the Rust source.
 
 **API params (Haiku):**
 - `max_tokens: 2048`
@@ -186,6 +208,7 @@ Return ONLY the cleaned text. No preamble, no quotes, no explanation.
 - Empty transcript → no injection, silent dismiss.
 - API error → fallback to raw Groq transcript, show warning toast.
 - Transcript >2000 chars → still process, but warn in toast.
+- **Haiku output diverges from the raw transcript** → fall back to the raw transcript with `cleaned = false`. Implemented in `modes/dictation.rs::diverges_from_raw`. Two heuristics: length blow-up (`cleaned > 1.5× raw` AND absolute delta ≥ 30 chars) and word-overlap collapse (<50% of raw's content words present in cleaned). This guards against Haiku breaking character despite the CRITICAL paragraph (e.g. answering a question, expanding into a template).
 
 ---
 
@@ -196,19 +219,19 @@ Return ONLY the cleaned text. No preamble, no quotes, no explanation.
 **Behaviour:**
 1. Audio captured and sent to Groq Whisper (no Haiku cleanup needed — actions match against raw text).
 2. Transcript is matched against the Action Registry using:
-   - **Exact phrase match** (first priority): trigger phrases match transcript verbatim (case-insensitive, ignoring punctuation).
+   - **Exact phrase match** (first priority): longest trigger wins, case-insensitive, punctuation ignored.
    - **Fuzzy match** (second priority): Levenshtein distance ≤ 3 against any trigger phrase.
    - **No match** → toast: "No action matched. Did you mean: [top 2 suggestions]?"
-3. Matched action is validated (permission check, destructive flag).
-4. If `destructive: true`, show confirmation toast with 3-second timeout to cancel.
+3. **Permission gate:** every key in the action's `requires_permissions:` is checked against the live macOS permission state. If any is missing the run is aborted, the user gets a toast naming the missing permission, and System Settings is deep-linked to the matching pane. Supported keys: `accessibility`, `screen_recording`, `automation`, `microphone`.
+4. **Destructive gate:** if `destructive: true`, the action is stored as pending (snapshotting the placeholder-resolved command and the original query) and the tray menu grows two items — `Confirm: <name>` and `Cancel pending action`. The voice trigger does NOT execute the action; the user must click Confirm in the tray. A 15-second timeout auto-cancels the pending entry. Triggering a second destructive action supersedes the first (logged). On confirm, the permission gate re-runs defensively (in case the user revoked something during the wait) and then the snapshotted command runs.
 5. Action executes. Success/failure toast shown.
 
 #### 5.2.1 Action Registry schema
 
-Actions are stored as YAML files in `~/Library/Application Support/Wisspa/actions/`. Each file = one action. Wisspa watches this directory and hot-reloads on change.
+Actions are stored as YAML files in `~/Library/Application Support/com.techguider.wisspa/actions/`. Each file = one action. Wisspa watches this directory and hot-reloads on change.
 
 ```yaml
-# ~/Library/Application Support/Wisspa/actions/screenshot.yaml
+# ~/Library/Application Support/com.techguider.wisspa/actions/screenshot.yaml
 id: screenshot
 name: "Interactive Screenshot to Clipboard"
 description: "Triggers macOS interactive screenshot, copies result to clipboard"
@@ -260,60 +283,14 @@ enabled: true
 | `show_desktop` | "show desktop" | keystroke | `fn+f11` |
 | `mute_audio` | "mute", "mute audio" | applescript | `set volume with output muted` |
 
-#### 5.2.3 Rust executor signature
+#### 5.2.3 Rust executor entry points
 
-```rust
-// src-tauri/src/actions/executor.rs
+The executor is split across two free functions in `src-tauri/src/actions/executor.rs`:
 
-pub struct ActionExecutor {
-    registry: ActionRegistry,
-    shell_allowlist: Vec<String>,
-}
+- `execute(app, action, query) -> Result<ExecOutcome>` — full pipeline. Resolves placeholders, runs the permission gate, runs the destructive gate (which may park the action as pending — see step 4 above), then dispatches.
+- `run_confirmed(app, action, resolved, query) -> ExecOutcome` — called by the tray "Confirm" handler in `actions::pending::confirm_now`. Re-checks the permission gate but bypasses the destructive gate.
 
-#[derive(Debug)]
-pub enum ActionResult {
-    Success { feedback: String },
-    Failure { reason: String },
-    Cancelled,
-    PermissionDenied { permission: String },
-}
-
-impl ActionExecutor {
-    pub async fn execute(
-        &self,
-        transcript: &str,
-        context: &ExecutionContext,
-    ) -> ActionResult {
-        // 1. Match transcript against registry
-        let matched = self.registry.find_match(transcript)?;
-
-        // 2. Check permissions
-        for perm in &matched.requires_permissions {
-            if !self.has_permission(perm) {
-                return ActionResult::PermissionDenied { permission: perm.clone() };
-            }
-        }
-
-        // 3. Confirmation if destructive
-        if matched.destructive {
-            let confirmed = self.request_confirmation(&matched).await;
-            if !confirmed { return ActionResult::Cancelled; }
-        }
-
-        // 4. Resolve placeholders ({query}, {clipboard}, etc.)
-        let resolved_command = self.resolve_placeholders(&matched.command, transcript, context);
-
-        // 5. Dispatch to executor for action type
-        match matched.action_type {
-            ActionType::Shell => self.run_shell(&resolved_command).await,
-            ActionType::AppleScript => self.run_applescript(&resolved_command).await,
-            ActionType::OpenUrl => self.open_url(&resolved_command).await,
-            ActionType::OpenApp => self.open_app(&resolved_command).await,
-            ActionType::Keystroke => self.send_keystroke(&resolved_command).await,
-        }
-    }
-}
-```
+Pending-confirmation state lives in `actions/pending.rs` as a `Lazy<RwLock<Option<Pending>>>`. Tray menu rebuilds happen through `tray::set_pending_confirmation`.
 
 **Security constraints:**
 - Shell commands must NOT use `sudo`, `rm -rf`, `dd`, or piped curl/wget execution. Validate on registry load.
@@ -436,7 +413,7 @@ A single Settings window accessible from the menu bar icon. Built as a React app
 
 6. **History**
    - List of last 100 dictations / actions / prompts (timestamp, mode, snippet)
-   - Stored locally in `~/Library/Application Support/Wisspa/history.db` (SQLite via `rusqlite`)
+   - Stored locally in `~/Library/Application Support/com.techguider.wisspa/history.db` (SQLite via `rusqlite`)
    - Clear history button
    - Export to CSV button
 
@@ -467,7 +444,7 @@ Each permission state is checked on every launch; if any are revoked, show a ban
 
 ## 6. Data Schemas
 
-### 6.1 Settings (`~/Library/Application Support/Wisspa/settings.json`)
+### 6.1 Settings (`~/Library/Application Support/com.techguider.wisspa/settings.json`)
 
 ```json
 {
@@ -478,13 +455,15 @@ Each permission state is checked on every launch; if any are revoked, show a ban
     "recording_mode": "press_and_hold",
     "play_sounds": true,
     "sound_volume": 0.5,
-    "theme": "system"
+    "theme": "system",
+    "mic_sensitivity": "medium",
+    "notes_path": "~/Documents/voice-notes.md"
   },
   "hotkeys": {
-    "dictation": "fn",
-    "action": "fn+shift",
-    "prompt": "fn+option",
-    "cancel": "escape"
+    "dictation": "CmdOrCtrl+Shift+Space",
+    "action": "CmdOrCtrl+Shift+A",
+    "prompt": "CmdOrCtrl+Shift+P",
+    "cancel": "Escape"
   },
   "prompt_mode": {
     "include_selected_text": true,
@@ -504,11 +483,20 @@ Each permission state is checked on every launch; if any are revoked, show a ban
   "prompt_llm": {
     "provider": "anthropic",
     "model": "claude-sonnet-4-6"
-  }
+  },
+  "onboarding_completed": false,
+  "mic_calibration": null
 }
 ```
 
-### 6.2 History (`~/Library/Application Support/Wisspa/history.db` — SQLite)
+Field notes (additions since the original PRD):
+
+- `general.mic_sensitivity` — `"off" | "low" | "medium" | "high"`. Controls the silence guard between recording capture and Groq upload.
+- `general.notes_path` — destination file for the `new_note` action. Tilde-expanded; parent directory auto-created on first write. Surfaced as `$WISSPA_NOTES_PATH` to shell-type actions.
+- `onboarding_completed` — set true after the user completes the 8-step first-launch wizard.
+- `mic_calibration` — populated by the onboarding calibration step. Shape: `{ silence_peak: f32, min_bytes_per_second: u32, calibrated_at: i64 }`. Used by the silence guard alongside `mic_sensitivity`.
+
+### 6.2 History (`~/Library/Application Support/com.techguider.wisspa/history.db` — SQLite)
 
 ```sql
 CREATE TABLE history (
@@ -594,70 +582,63 @@ Errors: surface; do not retry automatically beyond 1 retry on 5xx.
 wisspa/
 ├── src-tauri/                    # Rust backend
 │   ├── Cargo.toml
-│   ├── tauri.conf.json
-│   ├── build.rs
+│   ├── tauri.conf.json           # Window definitions, identifier, bundling
+│   ├── Info.plist                # macOS usage descriptions (Mic / Apple Events / Screen Capture)
+│   ├── entitlements.plist
+│   ├── capabilities/default.json # Tauri 2 capability ACL
+│   ├── icons/                    # All platform icon sizes
 │   └── src/
-│       ├── main.rs               # Entry point, setup
-│       ├── lib.rs                # Re-exports
-│       ├── hotkeys.rs            # Global hotkey registration
-│       ├── audio.rs              # Audio capture bridge to frontend
-│       ├── stt.rs                # Groq client
-│       ├── llm.rs                # Anthropic client (Haiku + Sonnet)
-│       ├── injector.rs           # Clipboard + Cmd+V injection via enigo
-│       ├── app_detector.rs       # Frontmost app detection via AppleScript
+│       ├── main.rs               # Entry point + window positioning + setup
+│       ├── lib.rs
+│       ├── commands.rs           # All Tauri commands exposed to the frontend
+│       ├── hotkeys.rs            # Global hotkey registration + live reassignment
+│       ├── audio.rs              # Audio bridge to frontend
+│       ├── stt.rs                # Groq Whisper multipart upload + hallucination filter
+│       ├── llm.rs                # Anthropic Messages API (Haiku + Sonnet)
+│       ├── injector.rs           # Clipboard write + AppleScript Cmd+V
+│       ├── selection.rs          # Read selected text via Cmd+C trick
+│       ├── app_detector.rs       # Frontmost app detection (AppleScript + press-time snapshot)
+│       ├── permissions.rs        # AX trust, screen-rec preflight, automation probe, required-perm check
+│       ├── keychain.rs           # API key storage in macOS Keychain
+│       ├── settings_store.rs     # Settings JSON on disk
+│       ├── history.rs            # SQLite history logger
+│       ├── sounds.rs             # Start/stop recording sounds
+│       ├── toast.rs              # Native notification toasts
+│       ├── tray.rs               # Menu-bar icon + menu (incl. pending-confirmation items)
 │       ├── actions/
-│       │   ├── mod.rs
-│       │   ├── registry.rs       # YAML loader, hot-reload
-│       │   ├── executor.rs       # Runs actions
-│       │   └── matcher.rs        # Exact + fuzzy matching
+│       │   ├── mod.rs            # Action + ActionType structs
+│       │   ├── registry.rs       # YAML loader, hot-reload watcher, validation
+│       │   ├── matcher.rs        # Exact (longest trigger wins) → fuzzy (Levenshtein ≤ 3)
+│       │   ├── executor.rs       # execute() pipeline + run_confirmed() bypass
+│       │   └── pending.rs        # Pending-confirmation state for destructive actions
 │       ├── modes/
-│       │   ├── mod.rs
-│       │   ├── dictation.rs
+│       │   ├── dictation.rs      # Includes Haiku-divergence guardrail
 │       │   ├── action.rs
 │       │   └── prompt.rs
-│       ├── permissions.rs        # macOS permission checks
-│       ├── keychain.rs           # API key storage
-│       ├── history.rs            # SQLite logger
-│       ├── prompts/
-│       │   ├── haiku_cleanup.md  # Loaded at build/runtime
-│       │   └── sonnet_prompt.md
-│       └── commands.rs           # Tauri command handlers exposed to frontend
+│       └── prompts/
+│           ├── haiku_cleanup.md  # Loaded via include_str!() in llm.rs
+│           └── sonnet_prompt.md  # Loaded via include_str!() in llm.rs
 ├── src/                          # React frontend
-│   ├── main.tsx
-│   ├── App.tsx
+│   ├── App.tsx                   # Hash router → runtime / overlay / settings / onboarding
 │   ├── components/
-│   │   ├── RecordingOverlay.tsx  # Floating mic indicator
-│   │   ├── Toast.tsx
-│   │   ├── ui/                   # shadcn components
-│   │   └── settings/
-│   │       ├── GeneralTab.tsx
-│   │       ├── ApiKeysTab.tsx
-│   │       ├── HotkeysTab.tsx
-│   │       ├── ActionsTab.tsx
-│   │       ├── PromptModeTab.tsx
-│   │       ├── HistoryTab.tsx
-│   │       └── AboutTab.tsx
+│   │   ├── RecordingOverlay.tsx
+│   │   └── settings/             # 7 tabs (hand-rolled — no shadcn)
 │   ├── pages/
-│   │   ├── Onboarding.tsx
+│   │   ├── Onboarding.tsx        # 8-step first-launch wizard
 │   │   └── Settings.tsx
-│   ├── store/
-│   │   ├── settings.ts           # Zustand store
-│   │   ├── recording.ts
-│   │   └── history.ts
 │   ├── lib/
 │   │   ├── audio.ts              # MediaRecorder wrapper
-│   │   ├── tauri.ts              # Tauri command bindings
-│   │   └── hotkey-input.ts       # Hotkey capture component logic
-│   └── styles/
-│       └── globals.css
-├── default-actions/              # Shipped YAML actions, copied to user dir on first run
-│   ├── screenshot.yaml
-│   ├── search_google.yaml
-│   └── ...
-├── package.json
-├── vite.config.ts
-├── tailwind.config.js
-├── tsconfig.json
+│   │   ├── settings.ts           # Settings client mirroring Rust SettingsStore schema
+│   │   └── tauri.ts
+│   └── store/
+│       └── recording.ts          # Zustand recording state
+├── default-actions/              # 14 default YAML actions shipped with installer
+├── .github/workflows/
+│   ├── release.yml               # Build + sign + publish
+│   └── security.yml              # gitleaks + cargo audit (weekly cron)
+├── DECISIONS.md                  # Implementation choices + reasoning
+├── LAUNCH.md                     # Commercial launch plan
+├── WISSPA_PRD.md                 # This document
 └── README.md
 ```
 
@@ -665,9 +646,9 @@ wisspa/
 
 ## 9. Visual Design
 
-- Menu bar icon: simple mic glyph, animates while recording.
-- Recording overlay: small pill (~200×40px) anchored to top-center of screen, semi-transparent, with live waveform. Dismisses with fade.
-- Settings window: 800×600, native macOS chrome, tabbed sidebar layout (like Raycast settings).
+- Menu bar icon: default window-icon glyph; while recording the title shows a red filled circle (`🔴`) and tooltip changes to "Wisspa — Recording…" so the user has an always-visible indicator even when the pill is occluded.
+- Recording overlay: pill (220×56px) anchored to top-center of the **primary** monitor (multi-display users must set their preferred display as primary in System Settings → Displays → Arrange). Semi-transparent, undecorated, hosts the MediaRecorder webview, dismisses with fade.
+- Settings window: 820×600, native macOS chrome, tabbed sidebar layout (like Raycast settings).
 - Toasts: top-right, stack vertically, auto-dismiss with progress bar.
 - Theme: respect system light/dark mode by default. Use Tailwind's `dark:` variants. Accent colour: a confident blue (`#3b82f6`) — easy to change later.
 - Typography: SF Pro (system), 14px body, 12px secondary.
@@ -682,11 +663,16 @@ wisspa/
 git clone <repo>
 cd wisspa
 pnpm install
+# Dev keys go in .env, NOT Keychain — each Rust rebuild produces a fresh
+# unsigned binary that macOS treats as a new app, so Keychain would prompt
+# on every rebuild. Production reads from Keychain.
+echo "GROQ_API_KEY=..." > .env
+echo "ANTHROPIC_API_KEY=..." >> .env
 pnpm tauri dev          # Dev mode
 pnpm tauri build        # Production build → dmg + app bundle in src-tauri/target/release/bundle/
 ```
 
-The user installs the `.dmg`, drags Wisspa.app to Applications, and launches. Production builds will ship signed and notarised; for unsigned dev builds, `xattr -d com.apple.quarantine /Applications/Wisspa.app` clears the Gatekeeper flag.
+The user installs the `.dmg`, drags Wisspa.app to Applications, and launches. Production builds ship signed and notarised; for unsigned dev builds, `xattr -d com.apple.quarantine /Applications/Wisspa.app` clears the Gatekeeper flag.
 
 ---
 
@@ -713,7 +699,7 @@ The build is complete when **all** of the following are true:
 ### 11.3 Action Registry
 
 - [ ] All 14 default actions ship with the installer.
-- [ ] Editing a YAML file in `~/Library/Application Support/Wisspa/actions/` is picked up by Wisspa without restart.
+- [ ] Editing a YAML file in `~/Library/Application Support/com.techguider.wisspa/actions/` is picked up by Wisspa without restart.
 - [ ] Invalid YAML produces a clear error in the Actions tab.
 - [ ] Shell allowlist rejects `sudo`, `rm -rf`, etc.
 
@@ -750,8 +736,9 @@ The build is complete when **all** of the following are true:
 - Reading text around cursor via Accessibility API (clipboard/selection only)
 - Voice activity detection / always-on
 - Command Mode (Wispr-style highlight-and-rewrite)
-- Auto-updates (manual reinstall for now)
 - Telemetry / analytics
+
+> Auto-updates were originally out-of-scope but were added in v0.1.0 via `tauri-plugin-updater`. Launch-on-login is also implemented (`tauri-plugin-autostart`).
 
 ---
 
@@ -771,14 +758,12 @@ The build is complete when **all** of the following are true:
 
 ---
 
-## 14. Open Questions for Claude Code
+## 14. Open Questions — resolved in v0.1.0
 
-Claude Code should make sensible defaults for the following and call them out in the README:
-
-1. Recording sound effect choice (use a soft system sound or ship a custom one).
-2. Exact menu bar icon SVG (suggest a minimal microphone glyph, ~16×16).
-3. Whether to bundle the SQLite library (use `rusqlite` with `bundled` feature for portability).
-4. Whether to use `tauri-plugin-autostart` for launch-on-login (yes — install it).
+1. **Recording sound effect** — custom short cues shipped in `src-tauri/src/sounds.rs` (start, stop, cancel, timeout).
+2. **Menu bar icon** — uses the default app window icon; recording state is indicated by a red-circle title `🔴` rather than an animated SVG.
+3. **SQLite bundling** — `rusqlite` with the `bundled` feature, as suggested.
+4. **Launch-on-login** — `tauri-plugin-autostart` installed; toggle lives in Settings → General.
 
 ---
 
