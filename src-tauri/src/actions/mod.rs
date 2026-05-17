@@ -1,5 +1,6 @@
 pub mod executor;
 pub mod matcher;
+pub mod pending;
 pub mod registry;
 
 use serde::{Deserialize, Serialize};
