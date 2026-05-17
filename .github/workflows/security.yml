@@ -53,9 +53,15 @@ jobs:
         # needed). We additionally deny `unsound` to catch soundness
         # advisories. Unmaintained-package warnings from Tauri's
         # cross-platform dep graph (GTK3 etc.) are intentionally not gated.
+        #
+        # RUSTSEC-2024-0370 (proc-macro-error 1.0.4 unmaintained) is ignored:
+        # the crate only enters our graph via GTK3 transitive deps used on
+        # Linux. Wisspa is macOS-only (Tauri's macos backend doesn't pull
+        # it), so this is platform-noise rather than real exposure. Revisit
+        # if upstream Tauri swaps the GTK dep tree.
         run: |
           cd src-tauri
-          cargo audit --deny unsound
+          cargo audit --deny unsound --ignore RUSTSEC-2024-0370
 
   npm-audit:
     name: pnpm audit
