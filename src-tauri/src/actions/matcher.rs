@@ -23,6 +23,17 @@ fn normalize(s: &str) -> String {
         .join(" ")
 }
 
+/// Skip the first `n` whitespace-delimited words from `s` and return the rest,
+/// trimmed. Used to extract the query portion of a transcript after the trigger.
+fn skip_words(s: &str, n: usize) -> String {
+    let mut remaining = s.trim();
+    for _ in 0..n {
+        remaining = remaining.trim_start();
+        remaining = remaining.trim_start_matches(|c: char| !c.is_whitespace());
+    }
+    remaining.trim().to_string()
+}
+
 /// Match a transcript against the registry. Two-pass:
 /// 1. Exact prefix match against any trigger phrase (longest match wins so
 ///    "search GitHub for" beats "search").
@@ -36,7 +47,7 @@ pub fn find_match(transcript: &str) -> Option<Match> {
     let actions = registry::snapshot();
 
     // Pass 1 — exact prefix match, prefer longest trigger.
-    let mut best_exact: Option<(usize, &Action, &str)> = None;
+    let mut best_exact: Option<(usize, usize, &Action)> = None; // (normalized_len, word_count, action)
     for action in &actions {
         for trigger in &action.triggers {
             let nt = normalize(trigger);
@@ -47,18 +58,17 @@ pub fn find_match(transcript: &str) -> Option<Match> {
                 || normalised.starts_with(&format!("{nt} "));
             if is_prefix {
                 let len = nt.len();
+                let word_count = nt.split_whitespace().count();
                 if best_exact.map(|(l, _, _)| len > l).unwrap_or(true) {
-                    best_exact = Some((len, action, trigger.as_str()));
+                    best_exact = Some((len, word_count, action));
                 }
             }
         }
     }
-    if let Some((nt_len, action, _trigger)) = best_exact {
-        let query = if normalised.len() > nt_len {
-            normalised[nt_len..].trim().to_string()
-        } else {
-            String::new()
-        };
+    if let Some((_, trigger_words, action)) = best_exact {
+        // Extract query from the *original* transcript (not the normalised version)
+        // so that capitalisation and punctuation are preserved in {query}.
+        let query = skip_words(transcript, trigger_words);
         return Some(Match {
             action: action.clone(),
             query,

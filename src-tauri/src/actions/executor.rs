@@ -219,7 +219,10 @@ async fn run_shell(
     working_dir: Option<&str>,
     env: &[(String, String)],
 ) -> Result<()> {
-    check_shell(command)?;
+    // Template was validated by executor::validate() at registry load time.
+    // Checking the resolved command here causes false-positive rejections when
+    // user speech (already POSIX-quoted) contains denylist keywords as literal
+    // text (e.g. "explain the rm -rf command").
     let mut cmd = tokio::process::Command::new("/bin/sh");
     cmd.args(["-c", command]);
     if let Some(dir) = working_dir {
@@ -252,7 +255,9 @@ fn settings_env<R: Runtime>(app: &AppHandle<R>) -> Vec<(String, String)> {
 }
 
 async fn run_applescript(script: &str) -> Result<()> {
-    check_applescript(script)?;
+    // Validation already ran at registry load time (executor::validate).
+    // Re-running check_applescript here would false-positive when a shell-quoted
+    // user value contains "do shell script" as literal speech.
     let output = tokio::process::Command::new("osascript")
         .args(["-e", script])
         .output()
