@@ -149,6 +149,9 @@ pub fn load<R: Runtime>(app: &AppHandle<R>) -> Result<Settings> {
         Ok(s) => Ok(s),
         Err(e) => {
             log::warn!("settings.json invalid, resetting to defaults: {e}");
+            // Preserve the corrupt file so the user can recover custom values.
+            let bak = path.with_extension("json.bak");
+            let _ = std::fs::copy(&path, &bak);
             let defaults = Settings::default();
             save(app, &defaults)?;
             Ok(defaults)
