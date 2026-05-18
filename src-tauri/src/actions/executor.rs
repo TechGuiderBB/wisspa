@@ -54,29 +54,57 @@ fn check_applescript(cmd: &str) -> Result<()> {
 }
 
 /// Substitute {query}, {clipboard}, {selected_text}, {active_app} placeholders.
+/// Values are inserted verbatim — safe for open_url and open_app templates.
 pub async fn resolve_placeholders<R: Runtime>(
     app: &AppHandle<R>,
     raw: &str,
     query: &str,
 ) -> String {
+    resolve_placeholders_inner(app, raw, query, false).await
+}
+
+/// Same as resolve_placeholders but single-quote-escapes every substituted
+/// value so the result is safe to pass to `/bin/sh -c` or `osascript -e`.
+/// Use this for Shell and Applescript action types.
+pub async fn resolve_placeholders_shell<R: Runtime>(
+    app: &AppHandle<R>,
+    raw: &str,
+    query: &str,
+) -> String {
+    resolve_placeholders_inner(app, raw, query, true).await
+}
+
+/// Wrap `s` in POSIX single-quotes, escaping any embedded single quotes.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
+}
+
+async fn resolve_placeholders_inner<R: Runtime>(
+    app: &AppHandle<R>,
+    raw: &str,
+    query: &str,
+    escape: bool,
+) -> String {
+    let maybe_escape = |v: String| if escape { shell_quote(&v) } else { v };
+
     let mut out = raw.to_string();
-    out = out.replace("{query}", query);
+    out = out.replace("{query}", &maybe_escape(query.to_string()));
 
     if out.contains("{clipboard}") {
         let clip = app.clipboard().read_text().unwrap_or_default();
-        out = out.replace("{clipboard}", &clip);
+        out = out.replace("{clipboard}", &maybe_escape(clip));
     }
     if out.contains("{selected_text}") {
         // For v1 we approximate selected text by reading the clipboard. A
         // proper "Cmd+C then read" path lands in Phase 5 for prompt mode.
         let clip = app.clipboard().read_text().unwrap_or_default();
-        out = out.replace("{selected_text}", &clip);
+        out = out.replace("{selected_text}", &maybe_escape(clip));
     }
     if out.contains("{active_app}") {
         let name = crate::app_detector::frontmost_app_name()
             .await
             .unwrap_or_else(|_| "Finder".to_string());
-        out = out.replace("{active_app}", &name);
+        out = out.replace("{active_app}", &maybe_escape(name));
     }
     out
 }
@@ -92,7 +120,12 @@ pub async fn execute<R: Runtime>(
     action: &Action,
     query: &str,
 ) -> Result<ExecOutcome> {
-    let resolved = resolve_placeholders(app, &action.command, query).await;
+    let resolved = match action.action_type {
+        ActionType::Shell | ActionType::Applescript => {
+            resolve_placeholders_shell(app, &action.command, query).await
+        }
+        _ => resolve_placeholders(app, &action.command, query).await,
+    };
 
     if let Some(outcome) = check_permissions(app, action).await {
         return Ok(outcome);
