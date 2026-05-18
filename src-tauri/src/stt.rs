@@ -14,6 +14,8 @@ pub async fn transcribe_audio(
     api_key: &str,
     audio_bytes: Vec<u8>,
     mime_type: &str,
+    language: &str,
+    model: &str,
 ) -> Result<String> {
     if api_key.is_empty() {
         return Err(anyhow!("GROQ_API_KEY is empty"));
@@ -36,11 +38,14 @@ pub async fn transcribe_audio(
         .mime_str(&base_mime)
         .with_context(|| format!("invalid mime: {base_mime}"))?;
 
+    let effective_model = if model.is_empty() { GROQ_MODEL } else { model };
+    let effective_language = if language.is_empty() { "en" } else { language };
+
     let form = Form::new()
         .part("file", part)
-        .text("model", GROQ_MODEL)
+        .text("model", effective_model.to_string())
         .text("response_format", "json")
-        .text("language", "en")
+        .text("language", effective_language.to_string())
         .text("temperature", "0");
 
     let client = reqwest::Client::builder()

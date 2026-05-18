@@ -236,7 +236,10 @@ pub async fn process_audio<R: Runtime>(
     log::info!("process_audio: {} bytes, mime={mime_type}", bytes.len());
 
     let groq_key = state.groq_key();
-    let transcript = match stt::transcribe_audio(&groq_key, bytes, &mime_type).await {
+    let stt_settings = settings_store::load(&app)
+        .map(|s| (s.stt.language, s.stt.model))
+        .unwrap_or_else(|_| ("en".to_string(), "whisper-large-v3-turbo".to_string()));
+    let transcript = match stt::transcribe_audio(&groq_key, bytes, &mime_type, &stt_settings.0, &stt_settings.1).await {
         Ok(t) => t,
         Err(e) => {
             log::error!("STT failed: {e:#}");
