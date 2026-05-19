@@ -183,14 +183,25 @@ fn migrate_known_actions<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
 
     // (filename, [past-default contents], current-default contents)
     // When the user's file equals any of `past_defaults`, overwrite with `current`.
+    // `current` is loaded via include_str! from the on-disk default so it stays
+    // in sync whenever a shipped default action template changes.
     let migrations: &[(&str, &[&str], &str)] = &[(
         "new_note.yaml",
         &[
             // Original v0.1.0 hardcoded path; now superseded by
             // $WISSPA_NOTES_PATH so the path is configurable in Settings.
             "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to ~/Documents/voice-notes.md\"\ntriggers:\n  - \"new note\"\n  - \"make a note\"\ntype: shell\ncommand: \"echo \\\"{query}\\\" >> ~/Documents/voice-notes.md\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
+            // Intermediate 2-trigger variant tracked in this table previously
+            // but never matching the actually-shipped on-disk YAML — kept in
+            // case any user picked it up from a dev build.
+            "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to the file configured in Settings → Actions\"\ntriggers:\n  - \"new note\"\n  - \"make a note\"\ntype: shell\ncommand: 'mkdir -p \"$(dirname \"$WISSPA_NOTES_PATH\")\" && printf -- \"- %s\\n\" \"{query}\" >> \"$WISSPA_NOTES_PATH\"'\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
+            // Previous shipped default — 7 triggers + Inbox.md fallback with
+            // pre-quoted `"{query}"`. Stripped to bare `{query}` in this PR
+            // because the executor now POSIX-quotes substituted values for
+            // shell action types.
+            "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to the file configured in Settings → Actions\"\ntriggers:\n  - \"new note\"\n  - \"new notes\"\n  - \"make a note\"\n  - \"take a note\"\n  - \"knew note\"\n  - \"keynote\"\n  - \"you note\"\ntype: shell\ncommand: 'if [ -d \"$WISSPA_NOTES_PATH\" ]; then F=\"$WISSPA_NOTES_PATH/Inbox.md\"; else F=\"$WISSPA_NOTES_PATH\"; fi; mkdir -p \"$(dirname \"$F\")\" && printf -- \"- %s\\n\" \"{query}\" >> \"$F\"'\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
         ],
-        "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to the file configured in Settings → Actions\"\ntriggers:\n  - \"new note\"\n  - \"make a note\"\ntype: shell\ncommand: 'mkdir -p \"$(dirname \"$WISSPA_NOTES_PATH\")\" && printf -- \"- %s\\n\" \"{query}\" >> \"$WISSPA_NOTES_PATH\"'\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
+        include_str!("../../../default-actions/new_note.yaml"),
     )];
 
     for (filename, past_defaults, current) in migrations {

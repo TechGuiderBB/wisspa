@@ -173,8 +173,10 @@ pub fn load<R: Runtime>(app: &AppHandle<R>) -> Result<Settings> {
 
 fn backup_path(path: &PathBuf) -> PathBuf {
     let parent = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    // Nanosecond resolution so two near-simultaneous corruption-recovery
+    // attempts in the same second cannot clobber each other's backups.
     match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(d) => parent.join(format!("settings.{}.json.bak", d.as_secs())),
+        Ok(d) => parent.join(format!("settings.{}.json.bak", d.as_nanos())),
         Err(_) => parent.join("settings.json.bak"),
     }
 }

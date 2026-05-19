@@ -113,26 +113,63 @@ async fn resolve_with<R: Runtime>(
     query: &str,
     mode: QuoteMode,
 ) -> String {
-    let mut out = raw.to_string();
-    out = out.replace("{query}", &apply_quote(mode, query));
+    // Single-pass walk over `raw`. Any text that appears in a substituted
+    // value never re-enters the scan range, so a voice query containing the
+    // literal text `{clipboard}` cannot trigger a nested clipboard read.
+    // Clipboard and active-app are fetched lazily on first reference.
+    let mut clipboard: Option<String> = None;
+    let mut active_app: Option<String> = None;
 
-    if out.contains("{clipboard}") {
-        let clip = app.clipboard().read_text().unwrap_or_default();
-        out = out.replace("{clipboard}", &apply_quote(mode, &clip));
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+
+    loop {
+        let Some(open) = rest.find('{') else {
+            out.push_str(rest);
+            return out;
+        };
+        out.push_str(&rest[..open]);
+        let after_open = &rest[open + 1..];
+        let Some(close) = after_open.find('}') else {
+            // No matching close brace; copy the remainder verbatim and stop.
+            out.push_str(&rest[open..]);
+            return out;
+        };
+        let name = &after_open[..close];
+        let replacement: Option<String> = match name {
+            "query" => Some(apply_quote(mode, query)),
+            "clipboard" | "selected_text" => {
+                // For v1 we approximate selected text by reading the
+                // clipboard. A proper "Cmd+C then read" path lands in
+                // Phase 5 for prompt mode.
+                if clipboard.is_none() {
+                    clipboard = Some(app.clipboard().read_text().unwrap_or_default());
+                }
+                Some(apply_quote(mode, clipboard.as_deref().unwrap()))
+            }
+            "active_app" => {
+                if active_app.is_none() {
+                    active_app = Some(
+                        crate::app_detector::frontmost_app_name()
+                            .await
+                            .unwrap_or_else(|_| "Finder".to_string()),
+                    );
+                }
+                Some(apply_quote(mode, active_app.as_deref().unwrap()))
+            }
+            _ => None,
+        };
+        match replacement {
+            Some(r) => out.push_str(&r),
+            None => {
+                // Unknown placeholder name; pass through `{name}` verbatim.
+                out.push('{');
+                out.push_str(name);
+                out.push('}');
+            }
+        }
+        rest = &after_open[close + 1..];
     }
-    if out.contains("{selected_text}") {
-        // For v1 we approximate selected text by reading the clipboard. A
-        // proper "Cmd+C then read" path lands in Phase 5 for prompt mode.
-        let clip = app.clipboard().read_text().unwrap_or_default();
-        out = out.replace("{selected_text}", &apply_quote(mode, &clip));
-    }
-    if out.contains("{active_app}") {
-        let name = crate::app_detector::frontmost_app_name()
-            .await
-            .unwrap_or_else(|_| "Finder".to_string());
-        out = out.replace("{active_app}", &apply_quote(mode, &name));
-    }
-    out
 }
 
 /// Verbatim placeholder substitution for non-shell, non-applescript action

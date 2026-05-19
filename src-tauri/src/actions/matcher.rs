@@ -55,11 +55,11 @@ pub fn find_match(transcript: &str) -> Option<Match> {
     // Pass 1 — exact prefix match, prefer longest trigger.
     // We store the normalised trigger length for the longest-wins tie-break
     // (matches the original behaviour) AND the raw trigger's whitespace-token
-    // count, because that's what we need to skip in the *original* transcript
-    // to preserve capitalisation/punctuation in `{query}`. Using the
-    // normalised count would mis-count hyphenated tokens (e.g. raw trigger
-    // "open new-note" is 2 whitespace tokens, but normalises to 3 words —
-    // see PR #5 review feedback).
+    // count, because the query must be skipped from the *original* transcript
+    // (not the normalised one) to preserve capitalisation and punctuation.
+    // Using the raw trigger's whitespace-token count keeps the skip count
+    // aligned with the transcript's own whitespace tokenisation, regardless
+    // of how `normalize` handles any internal punctuation in either string.
     let mut best_exact: Option<(usize, &Action, usize)> = None;
     for action in &actions {
         for trigger in &action.triggers {
