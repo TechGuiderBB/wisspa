@@ -23,6 +23,23 @@ fn normalize(s: &str) -> String {
         .join(" ")
 }
 
+/// Walk `s` by whitespace tokens, skip the first `n`, and return the remainder
+/// trimmed. Returns an empty string if `n >= token count`.
+///
+/// This preserves the user's original capitalisation, punctuation, and inner
+/// whitespace within the remaining tokens — used to extract `{query}` from the
+/// untouched transcript so voice notes don't lose case/punctuation. The
+/// remainder is rejoined with single spaces because the SplitWhitespace
+/// iterator discards inter-token whitespace runs; that's a deliberate tradeoff
+/// to keep tokenisation parity with `normalize`.
+fn skip_words(s: &str, n: usize) -> String {
+    let tokens: Vec<&str> = s.split_whitespace().collect();
+    if n >= tokens.len() {
+        return String::new();
+    }
+    tokens[n..].join(" ").trim().to_string()
+}
+
 /// Match a transcript against the registry. Two-pass:
 /// 1. Exact prefix match against any trigger phrase (longest match wins so
 ///    "search GitHub for" beats "search").
@@ -36,7 +53,14 @@ pub fn find_match(transcript: &str) -> Option<Match> {
     let actions = registry::snapshot();
 
     // Pass 1 — exact prefix match, prefer longest trigger.
-    let mut best_exact: Option<(usize, &Action, &str)> = None;
+    // We store the normalised trigger length for the longest-wins tie-break
+    // (matches the original behaviour) AND the raw trigger's whitespace-token
+    // count, because the query must be skipped from the *original* transcript
+    // (not the normalised one) to preserve capitalisation and punctuation.
+    // Using the raw trigger's whitespace-token count keeps the skip count
+    // aligned with the transcript's own whitespace tokenisation, regardless
+    // of how `normalize` handles any internal punctuation in either string.
+    let mut best_exact: Option<(usize, &Action, usize)> = None;
     for action in &actions {
         for trigger in &action.triggers {
             let nt = normalize(trigger);
@@ -47,18 +71,15 @@ pub fn find_match(transcript: &str) -> Option<Match> {
                 || normalised.starts_with(&format!("{nt} "));
             if is_prefix {
                 let len = nt.len();
+                let trigger_words = trigger.split_whitespace().count();
                 if best_exact.map(|(l, _, _)| len > l).unwrap_or(true) {
-                    best_exact = Some((len, action, trigger.as_str()));
+                    best_exact = Some((len, action, trigger_words));
                 }
             }
         }
     }
-    if let Some((nt_len, action, _trigger)) = best_exact {
-        let query = if normalised.len() > nt_len {
-            normalised[nt_len..].trim().to_string()
-        } else {
-            String::new()
-        };
+    if let Some((_nt_len, action, trigger_words)) = best_exact {
+        let query = skip_words(transcript, trigger_words);
         return Some(Match {
             action: action.clone(),
             query,
@@ -104,3 +125,7 @@ pub fn suggest_top(transcript: &str, n: usize) -> Vec<Suggestion> {
         })
         .collect()
 }
+
+// TODO: tests — cover (a) hyphenated trigger "open new-note", (b) mixed-case
+// punctuated transcript like "New Note! Buy Bread, please?" preserving case
+// and punctuation in {query}, (c) longest-trigger tie-break still wins.

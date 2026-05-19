@@ -10,7 +10,7 @@ triggers:
   - "keynote"
   - "you note"
 type: shell
-command: 'if [ -d "$WISSPA_NOTES_PATH" ]; then F="$WISSPA_NOTES_PATH/Inbox.md"; else F="$WISSPA_NOTES_PATH"; fi; mkdir -p "$(dirname "$F")" && printf -- "- %s\n" "{query}" >> "$F"'
+command: 'if [ -d "$WISSPA_NOTES_PATH" ]; then F="$WISSPA_NOTES_PATH/Inbox.md"; else F="$WISSPA_NOTES_PATH"; fi; mkdir -p "$(dirname "$F")" && printf -- "- %s\n" {query} >> "$F"'
 working_dir: null
 requires_permissions: []
 destructive: false

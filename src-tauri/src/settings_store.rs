@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, Runtime};
 
 const SETTINGS_FILE: &str = "settings.json";
@@ -149,10 +150,34 @@ pub fn load<R: Runtime>(app: &AppHandle<R>) -> Result<Settings> {
         Ok(s) => Ok(s),
         Err(e) => {
             log::warn!("settings.json invalid, resetting to defaults: {e}");
+            // Best-effort backup so the user can recover custom hotkeys /
+            // notes_path after a parse failure. Failures here must not block
+            // the reset — but they must leave a log trace.
+            let bak = backup_path(&path);
+            match std::fs::copy(&path, &bak) {
+                Ok(_) => log::info!(
+                    "backed up corrupt settings.json to {}",
+                    bak.display()
+                ),
+                Err(copy_err) => log::warn!(
+                    "failed to back up corrupt settings.json to {}: {copy_err}",
+                    bak.display()
+                ),
+            }
             let defaults = Settings::default();
             save(app, &defaults)?;
             Ok(defaults)
         }
+    }
+}
+
+fn backup_path(path: &PathBuf) -> PathBuf {
+    let parent = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    // Nanosecond resolution so two near-simultaneous corruption-recovery
+    // attempts in the same second cannot clobber each other's backups.
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => parent.join(format!("settings.{}.json.bak", d.as_nanos())),
+        Err(_) => parent.join("settings.json.bak"),
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::{
     actions::registry, history, hotkeys, keychain, modes::action as action_mode,
-    modes::dictation, modes::prompt as prompt_mode, permissions, settings_store, stt, toast,
-    AppState,
+    modes::dictation, modes::prompt as prompt_mode, permissions, settings_store,
+    settings_store::Settings, stt, toast, AppState,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
@@ -236,7 +236,21 @@ pub async fn process_audio<R: Runtime>(
     log::info!("process_audio: {} bytes, mime={mime_type}", bytes.len());
 
     let groq_key = state.groq_key();
-    let transcript = match stt::transcribe_audio(&groq_key, bytes, &mime_type).await {
+    let (stt_language, stt_model) = settings_store::load(&app)
+        .map(|s| (s.stt.language, s.stt.model))
+        .unwrap_or_else(|_| {
+            let d = Settings::default().stt;
+            (d.language, d.model)
+        });
+    let transcript = match stt::transcribe_audio(
+        &groq_key,
+        bytes,
+        &mime_type,
+        &stt_language,
+        &stt_model,
+    )
+    .await
+    {
         Ok(t) => t,
         Err(e) => {
             log::error!("STT failed: {e:#}");
