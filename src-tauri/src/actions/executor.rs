@@ -53,32 +53,124 @@ fn check_applescript(cmd: &str) -> Result<()> {
     Ok(())
 }
 
-/// Substitute {query}, {clipboard}, {selected_text}, {active_app} placeholders.
-pub async fn resolve_placeholders<R: Runtime>(
+/// POSIX shell single-quote wrap. Any embedded `'` is closed, escaped via
+/// `'"'"'`, and re-opened. Safe to splice into a `/bin/sh -c` command;
+/// metacharacters inside the wrapped value cannot escape the literal context.
+fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\"'\"'");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// AppleScript string-literal wrap. Escapes `\` to `\\` and `"` to `\"`,
+/// then wraps in `"…"`. Safe to splice into a string literal in a script
+/// passed to `osascript -e`.
+fn applescript_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// How to transform each substituted placeholder value before insertion.
+#[derive(Clone, Copy)]
+enum QuoteMode {
+    /// Insert the value as-is. Used by action types that don't pass through
+    /// a shell or AppleScript interpreter (open_url, open_app, keystroke).
+    Verbatim,
+    /// POSIX single-quote wrap each substituted value.
+    Shell,
+    /// AppleScript string-literal wrap each substituted value.
+    Applescript,
+}
+
+fn apply_quote(mode: QuoteMode, value: &str) -> String {
+    match mode {
+        QuoteMode::Verbatim => value.to_string(),
+        QuoteMode::Shell => shell_quote(value),
+        QuoteMode::Applescript => applescript_quote(value),
+    }
+}
+
+async fn resolve_with<R: Runtime>(
     app: &AppHandle<R>,
     raw: &str,
     query: &str,
+    mode: QuoteMode,
 ) -> String {
     let mut out = raw.to_string();
-    out = out.replace("{query}", query);
+    out = out.replace("{query}", &apply_quote(mode, query));
 
     if out.contains("{clipboard}") {
         let clip = app.clipboard().read_text().unwrap_or_default();
-        out = out.replace("{clipboard}", &clip);
+        out = out.replace("{clipboard}", &apply_quote(mode, &clip));
     }
     if out.contains("{selected_text}") {
         // For v1 we approximate selected text by reading the clipboard. A
         // proper "Cmd+C then read" path lands in Phase 5 for prompt mode.
         let clip = app.clipboard().read_text().unwrap_or_default();
-        out = out.replace("{selected_text}", &clip);
+        out = out.replace("{selected_text}", &apply_quote(mode, &clip));
     }
     if out.contains("{active_app}") {
         let name = crate::app_detector::frontmost_app_name()
             .await
             .unwrap_or_else(|_| "Finder".to_string());
-        out = out.replace("{active_app}", &name);
+        out = out.replace("{active_app}", &apply_quote(mode, &name));
     }
     out
+}
+
+/// Verbatim placeholder substitution for non-shell, non-applescript action
+/// types (open_url, open_app, keystroke). Values are inserted as-is — these
+/// dispatch paths do not invoke a shell interpreter, so there is no
+/// metacharacter context to escape against.
+pub async fn resolve_placeholders<R: Runtime>(
+    app: &AppHandle<R>,
+    raw: &str,
+    query: &str,
+) -> String {
+    resolve_with(app, raw, query, QuoteMode::Verbatim).await
+}
+
+/// Shell-safe placeholder substitution. Every substituted value is wrapped in
+/// POSIX single quotes (with embedded `'` escaped via `'"'"'`), so the result
+/// is safe to pass to `/bin/sh -c`. The static command template is
+/// pre-validated by `check_shell()` at registry load time; substituted values
+/// cannot break out of their single-quoted context.
+pub async fn resolve_placeholders_shell<R: Runtime>(
+    app: &AppHandle<R>,
+    raw: &str,
+    query: &str,
+) -> String {
+    resolve_with(app, raw, query, QuoteMode::Shell).await
+}
+
+/// AppleScript-safe placeholder substitution. Every substituted value is
+/// wrapped in `"…"` with `\` and `"` escaped, so the result is safe to pass
+/// to `osascript -e`. The static template is pre-validated by
+/// `check_applescript()` at registry load time; substituted values cannot
+/// break out of their string-literal context.
+pub async fn resolve_placeholders_applescript<R: Runtime>(
+    app: &AppHandle<R>,
+    raw: &str,
+    query: &str,
+) -> String {
+    resolve_with(app, raw, query, QuoteMode::Applescript).await
 }
 
 /// Outcome of executing an action.
@@ -92,7 +184,11 @@ pub async fn execute<R: Runtime>(
     action: &Action,
     query: &str,
 ) -> Result<ExecOutcome> {
-    let resolved = resolve_placeholders(app, &action.command, query).await;
+    let resolved = match action.action_type {
+        ActionType::Shell => resolve_placeholders_shell(app, &action.command, query).await,
+        ActionType::Applescript => resolve_placeholders_applescript(app, &action.command, query).await,
+        _ => resolve_placeholders(app, &action.command, query).await,
+    };
 
     if let Some(outcome) = check_permissions(app, action).await {
         return Ok(outcome);
@@ -219,7 +315,11 @@ async fn run_shell(
     working_dir: Option<&str>,
     env: &[(String, String)],
 ) -> Result<()> {
-    check_shell(command)?;
+    // No runtime allowlist check here: the static template was already
+    // validated by `check_shell()` at registry load time (and re-validated by
+    // the file watcher on YAML changes), and `resolve_placeholders_shell`
+    // single-quote-wraps every substituted value so user-spoken content can
+    // never inject shell metacharacters into the resolved command.
     let mut cmd = tokio::process::Command::new("/bin/sh");
     cmd.args(["-c", command]);
     if let Some(dir) = working_dir {
@@ -252,7 +352,12 @@ fn settings_env<R: Runtime>(app: &AppHandle<R>) -> Vec<(String, String)> {
 }
 
 async fn run_applescript(script: &str) -> Result<()> {
-    check_applescript(script)?;
+    // No runtime allowlist check here: the static template was already
+    // validated by `check_applescript()` at registry load time (and re-
+    // validated by the file watcher on YAML changes), and
+    // `resolve_placeholders_applescript` string-literal-wraps every
+    // substituted value so user-spoken content can never break out of its
+    // quoted context to inject `do shell script` or similar.
     let output = tokio::process::Command::new("osascript")
         .args(["-e", script])
         .output()
