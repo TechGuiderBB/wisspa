@@ -1,9 +1,19 @@
 use anyhow::{anyhow, Context, Result};
+use once_cell::sync::Lazy;
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 
 const GROQ_TRANSCRIBE_URL: &str = "https://api.groq.com/openai/v1/audio/transcriptions";
 const GROQ_MODEL: &str = "whisper-large-v3-turbo";
+
+// Shared client re-uses TLS sessions and connection pool across calls.
+// Building a new Client per transcription added ~200-400ms TLS overhead.
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .expect("reqwest client init")
+});
 
 #[derive(Debug, Deserialize)]
 struct GroqResponse {
@@ -51,11 +61,7 @@ pub async fn transcribe_audio(
         .text("language", language.to_string())
         .text("temperature", "0");
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?;
-
-    let res = client
+    let res = HTTP_CLIENT
         .post(GROQ_TRANSCRIBE_URL)
         .bearer_auth(api_key)
         .multipart(form)
