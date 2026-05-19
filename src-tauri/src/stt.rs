@@ -14,6 +14,8 @@ pub async fn transcribe_audio(
     api_key: &str,
     audio_bytes: Vec<u8>,
     mime_type: &str,
+    language: &str,
+    model: &str,
 ) -> Result<String> {
     if api_key.is_empty() {
         return Err(anyhow!("GROQ_API_KEY is empty"));
@@ -21,6 +23,12 @@ pub async fn transcribe_audio(
     if audio_bytes.is_empty() {
         return Err(anyhow!("empty audio buffer"));
     }
+
+    // Settings dropdowns can legitimately be blank when the user has never
+    // touched them; fall back to the shipped defaults rather than POSTing an
+    // empty form field to Groq.
+    let language = if language.trim().is_empty() { "en" } else { language };
+    let model = if model.trim().is_empty() { GROQ_MODEL } else { model };
 
     // MediaRecorder mime often includes a codec parameter ("audio/webm; codecs=opus").
     // reqwest's mime_str can be picky about that; collapse to the base type for the part.
@@ -38,9 +46,9 @@ pub async fn transcribe_audio(
 
     let form = Form::new()
         .part("file", part)
-        .text("model", GROQ_MODEL)
+        .text("model", model.to_string())
         .text("response_format", "json")
-        .text("language", "en")
+        .text("language", language.to_string())
         .text("temperature", "0");
 
     let client = reqwest::Client::builder()
