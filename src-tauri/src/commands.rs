@@ -292,24 +292,32 @@ pub async fn process_audio<R: Runtime>(
     }
 
     let started = std::time::Instant::now();
-    let result = match mode.as_str() {
-        "action" => run_action_mode(&app, &transcript).await,
-        "prompt" => run_prompt_mode(&app, &state, &transcript).await,
-        _ => run_dictation_mode(&app, &state, &transcript).await,
-    };
+    // action mode returns (text, matched_action_id) so history can record which action ran.
+    let (result, matched_action_id): (Result<String, String>, Option<String>) =
+        match mode.as_str() {
+            "action" => {
+                let r = run_action_mode(&app, &transcript).await;
+                match r {
+                    Ok((text, aid)) => (Ok(text), aid),
+                    Err(e) => (Err(e), None),
+                }
+            }
+            "prompt" => (run_prompt_mode(&app, &state, &transcript).await, None),
+            _ => (run_dictation_mode(&app, &state, &transcript).await, None),
+        };
     let duration_ms = started.elapsed().as_millis() as i64;
     let active_app = crate::app_detector::frontmost_app_name().await.ok();
-    let (status, output, action_id) = match &result {
-        Ok(text) if !text.is_empty() => ("success", Some(text.clone()), None),
-        Ok(_) => ("success", None, None),
-        Err(e) => ("failure", Some(e.clone()), None),
+    let (status, output) = match &result {
+        Ok(text) if !text.is_empty() => ("success", Some(text.clone())),
+        Ok(_) => ("success", None),
+        Err(e) => ("failure", Some(e.clone())),
     };
     let _ = history::insert(history::NewEntry {
         mode: mode.clone(),
         active_app,
         raw_transcript: transcript.clone(),
         output,
-        action_id,
+        action_id: matched_action_id,
         duration_ms: Some(duration_ms),
         status: status.to_string(),
     });
@@ -381,17 +389,19 @@ async fn run_dictation_mode<R: Runtime>(
 async fn run_action_mode<R: Runtime>(
     app: &AppHandle<R>,
     transcript: &str,
-) -> Result<String, String> {
+) -> Result<(String, Option<String>), String> {
     match action_mode::run(app, transcript).await {
         Ok(outcome) => {
+            let action_id = outcome.matched_action_id.clone();
             if outcome.success {
                 toast::info(app, "Action", &outcome.message);
-                Ok(outcome
-                    .matched_action_id
-                    .unwrap_or_else(|| outcome.message.clone()))
+                Ok((
+                    outcome.matched_action_id.unwrap_or_else(|| outcome.message.clone()),
+                    action_id,
+                ))
             } else {
                 toast::warn(app, "Action", &outcome.message);
-                Ok(outcome.message)
+                Ok((outcome.message, action_id))
             }
         }
         Err(e) => {
