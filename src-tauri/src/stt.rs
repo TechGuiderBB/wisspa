@@ -8,11 +8,13 @@ const GROQ_MODEL: &str = "whisper-large-v3-turbo";
 
 // Shared client re-uses TLS sessions and connection pool across calls.
 // Building a new Client per transcription added ~200-400ms TLS overhead.
+// Falls back to a default Client (infallible) if the configured builder
+// fails — avoids panicking the Tauri process on rare TLS/proxy init issues.
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
-        .expect("reqwest client init")
+        .unwrap_or_else(|_| reqwest::Client::new())
 });
 
 #[derive(Debug, Deserialize)]

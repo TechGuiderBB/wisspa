@@ -7,11 +7,13 @@ const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 // Shared client re-uses TLS sessions and connection pool across calls.
+// Falls back to a default Client (infallible) if the configured builder
+// fails — avoids panicking the Tauri process on rare TLS/proxy init issues.
 static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .expect("reqwest client init")
+        .unwrap_or_else(|_| reqwest::Client::new())
 });
 
 pub const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
