@@ -177,7 +177,7 @@ fn main() {
             // macOS: be an accessory app — no dock icon, no menu bar focus.
             #[cfg(target_os = "macos")]
             {
-                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
             position_overlay_top_center(app);
             stack_main_under_overlay(app);

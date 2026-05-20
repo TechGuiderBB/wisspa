@@ -299,7 +299,7 @@ async fn check_permissions<R: Runtime>(
         ("permissions", "them")
     };
     let suffix = if has_unknown {
-        format!(" Fix the action YAML's requires_permissions list.")
+        " Fix the action YAML's requires_permissions list.".to_string()
     } else {
         format!(" Opening System Settings — grant {pronoun} and try again.")
     };
