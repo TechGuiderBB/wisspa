@@ -70,9 +70,10 @@ fn shell_quote(s: &str) -> String {
     out
 }
 
-/// AppleScript string-literal wrap. Escapes `\` to `\\` and `"` to `\"`,
-/// then wraps in `"…"`. Safe to splice into a string literal in a script
-/// passed to `osascript -e`.
+/// AppleScript string-literal wrap. Escapes `\` to `\\`, `"` to `\"`, and
+/// collapses `\n`/`\r` to a space — AppleScript double-quoted string literals
+/// do not support literal newlines, so multi-line clipboard content would
+/// otherwise produce an osascript syntax error and silently fail the action.
 fn applescript_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
@@ -80,6 +81,7 @@ fn applescript_quote(s: &str) -> String {
         match ch {
             '\\' => out.push_str("\\\\"),
             '"' => out.push_str("\\\""),
+            '\n' | '\r' => out.push(' '),
             c => out.push(c),
         }
     }
@@ -513,8 +515,9 @@ fn combo_to_applescript(combo: &str) -> Result<String> {
         ));
     }
 
-    // Default: keystroke a single character.
-    if key_str.len() != 1 {
+    // Default: keystroke a single character. Use char count, not byte length,
+    // so multi-byte Unicode characters (e.g. é, ñ) are accepted correctly.
+    if key_str.chars().count() != 1 {
         return Err(anyhow!(
             "keystroke '{key_str}' is not a single character or known special key"
         ));

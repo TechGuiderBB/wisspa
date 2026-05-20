@@ -1,9 +1,20 @@
 use anyhow::{anyhow, Context, Result};
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::time::Duration;
 
 const ANTHROPIC_URL: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+// Shared client re-uses TLS sessions and connection pool across calls.
+// Falls back to a default Client (infallible) if the configured builder
+// fails — avoids panicking the Tauri process on rare TLS/proxy init issues.
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+});
 
 pub const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
 #[allow(dead_code)] // wired up in Phase 5 (Prompt Mode)
@@ -98,14 +109,10 @@ async fn call_anthropic(
         "messages": [{ "role": "user", "content": user_message }],
     });
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
-
     let mut attempt = 0u8;
     loop {
         attempt += 1;
-        let res = client
+        let res = HTTP_CLIENT
             .post(ANTHROPIC_URL)
             .header("x-api-key", api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
