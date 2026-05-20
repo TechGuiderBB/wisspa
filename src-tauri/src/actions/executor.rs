@@ -35,10 +35,18 @@ pub fn validate(action: &Action) -> Result<()> {
 fn check_shell(cmd: &str) -> Result<()> {
     // Normalise runs of whitespace to single spaces so deny-list tokens like
     // "sudo " and "rm -rf" can't be bypassed by inserting extra whitespace
-    // (e.g. "rm  -rf" or "sudo\tthing").
-    let lower = cmd.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    // (e.g. "rm  -rf" or "sudo\tthing"). split_whitespace strips leading
+    // whitespace, so prepend a single space to the scan string. That way
+    // deny tokens that intentionally start with a space (e.g. " :(){" for
+    // the fork bomb) still match when the command begins with that pattern.
+    let normalised = cmd
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    let scan = format!(" {normalised}");
     for bad in SHELL_DENY {
-        if lower.contains(bad) {
+        if scan.contains(bad) {
             return Err(anyhow!("shell command rejected (contains '{bad}')"));
         }
     }
