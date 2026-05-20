@@ -46,9 +46,15 @@ pub async fn read_selected_text<R: Runtime>(app: &AppHandle<R>) -> Result<Option
         _ => None,
     };
 
-    // Restore prior clipboard contents.
+    // Restore prior clipboard contents. If prior was None (clipboard was empty
+    // or held non-text content that read_text() cannot snapshot), and Cmd+C
+    // wrote the selection into the clipboard, clear rather than leave the
+    // selection text behind — a non-text original is already lost, but at
+    // least the clipboard slot is not silently poisoned with unexpected text.
     if let Some(prev) = prior {
         let _ = clipboard.write_text(prev);
+    } else if selection.is_some() {
+        let _ = clipboard.write_text(String::new());
     }
 
     Ok(selection)
