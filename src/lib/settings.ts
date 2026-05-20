@@ -32,7 +32,6 @@ export type Settings = {
     mic_sensitivity: MicSensitivity;
     notes_path: string;
     max_recording_seconds: number;
-    long_paste_threshold: number;
   };
   hotkeys: {
     dictation: string;

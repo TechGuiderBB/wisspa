@@ -35,10 +35,17 @@ pub struct General {
     /// before use; parent directory auto-created on first write.
     #[serde(default = "default_notes_path")]
     pub notes_path: String,
+    /// Frontend auto-stops and reports to history after this many seconds.
+    #[serde(default = "default_max_recording_seconds")]
+    pub max_recording_seconds: u32,
 }
 
 fn default_mic_sensitivity() -> String {
     "medium".to_string()
+}
+
+fn default_max_recording_seconds() -> u32 {
+    30
 }
 
 fn default_notes_path() -> String {
@@ -94,6 +101,7 @@ impl Default for Settings {
                 theme: "system".to_string(),
                 mic_sensitivity: "medium".to_string(),
                 notes_path: default_notes_path(),
+                max_recording_seconds: 30,
             },
             hotkeys: Hotkeys {
                 // Phase 1/2 ships with safe combos; PRD §4.2 defaults to `fn` etc.
@@ -103,6 +111,7 @@ impl Default for Settings {
                 prompt: "CmdOrCtrl+Shift+P".to_string(),
                 cancel: "Escape".to_string(),
             },
+
             prompt_mode: PromptMode {
                 include_selected_text: true,
                 show_preview: true,

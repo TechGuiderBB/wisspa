@@ -163,6 +163,26 @@ pub fn request_screen_recording_access() {
 }
 
 #[tauri::command]
+pub async fn report_recording_timeout<R: Runtime>(
+    app: AppHandle<R>,
+    max_seconds: u32,
+) -> Result<(), String> {
+    log::warn!("recording exceeded {max_seconds}s cap — auto-stopped by frontend timer");
+    let active_app = crate::app_detector::frontmost_app_name().await.ok();
+    let _ = history::insert(history::NewEntry {
+        mode: "timeout".to_string(),
+        active_app,
+        raw_transcript: String::new(),
+        output: Some(format!("(recording exceeded {max_seconds}s cap)")),
+        action_id: None,
+        duration_ms: Some(max_seconds as i64 * 1000),
+        status: "cancelled".to_string(),
+    });
+    toast::warn(&app, "Recording stopped", &format!("Exceeded the {max_seconds}s recording limit."));
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn report_silent_recording<R: Runtime>(
     app: AppHandle<R>,
     mode: String,
