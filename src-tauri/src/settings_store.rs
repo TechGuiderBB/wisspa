@@ -171,7 +171,7 @@ pub fn load<R: Runtime>(app: &AppHandle<R>) -> Result<Settings> {
     }
 }
 
-fn backup_path(path: &PathBuf) -> PathBuf {
+fn backup_path(path: &std::path::Path) -> PathBuf {
     let parent = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
     // Nanosecond resolution so two near-simultaneous corruption-recovery
     // attempts in the same second cannot clobber each other's backups.
