@@ -33,7 +33,10 @@ pub fn validate(action: &Action) -> Result<()> {
 }
 
 fn check_shell(cmd: &str) -> Result<()> {
-    let lower = cmd.to_lowercase();
+    // Normalise runs of whitespace to single spaces so deny-list tokens like
+    // "sudo " and "rm -rf" can't be bypassed by inserting extra whitespace
+    // (e.g. "rm  -rf" or "sudo\tthing").
+    let lower = cmd.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     for bad in SHELL_DENY {
         if lower.contains(bad) {
             return Err(anyhow!("shell command rejected (contains '{bad}')"));
