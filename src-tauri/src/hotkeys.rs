@@ -160,8 +160,14 @@ pub fn reassign<R: Runtime>(app: &AppHandle<R>, action: &str, combo: &str) -> Re
     }
 
     let new = parse_shortcut(combo)?;
-    gs.register(new)
-        .map_err(|e| anyhow!("register {combo}: {e}"))?;
+    if let Err(e) = gs.register(new) {
+        // New combo failed (e.g. already claimed by another app). Restore the
+        // previous shortcut so the action is not left without a hotkey.
+        if let Some(prev) = previous {
+            let _ = gs.register(prev);
+        }
+        return Err(anyhow!("register {combo}: {e}"));
+    }
 
     let mut map = registry().lock().map_err(|_| anyhow!("registry poisoned"))?;
     map.insert(action.to_string(), new);
