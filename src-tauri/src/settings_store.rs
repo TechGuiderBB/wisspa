@@ -101,7 +101,7 @@ impl Default for Settings {
                 theme: "system".to_string(),
                 mic_sensitivity: "medium".to_string(),
                 notes_path: default_notes_path(),
-                max_recording_seconds: 30,
+                max_recording_seconds: default_max_recording_seconds(),
             },
             hotkeys: Hotkeys {
                 // Phase 1/2 ships with safe combos; PRD §4.2 defaults to `fn` etc.
