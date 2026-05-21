@@ -5,6 +5,8 @@ import {
   stopRecording,
   cancelRecording,
   blobToBase64,
+  warmMic,
+  releaseWarmStream,
   MicTrackUnhealthyError,
 } from "./lib/audio";
 import { processAudio, type RecordingMode } from "./lib/tauri";
@@ -25,6 +27,8 @@ const STOP_EVENT = "wisspa://stop-recording";
 const CANCEL_EVENT = "wisspa://cancel-recording";
 const MODE_EVENT = "wisspa://recording-mode";
 const STATUS_EVENT = "wisspa://recording-status";
+const PREWARM_EVENT = "wisspa://prewarm-mic";
+const PREWARM_CANCEL_EVENT = "wisspa://prewarm-cancel";
 
 type StatusFlash = {
   kind: "no-speech" | "error";
@@ -204,6 +208,17 @@ function Runtime() {
       }
       cancelRecording();
       setRecording(false);
+    }).then(track);
+
+    // Opt-in pre-warm (fast_recording_start): the Rust modifier monitor warms
+    // the mic when the hotkey's modifier is held, and releases it if the combo
+    // is never completed.
+    listen(PREWARM_EVENT, () => {
+      void warmMic();
+    }).then(track);
+
+    listen(PREWARM_CANCEL_EVENT, () => {
+      releaseWarmStream();
     }).then(track);
 
     listen<StatusFlash>(STATUS_EVENT, (e) => {

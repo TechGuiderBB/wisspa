@@ -36,6 +36,9 @@ pub fn play<R: Runtime>(app: &AppHandle<R>, cue: Cue) {
     if !settings.general.play_sounds {
         return;
     }
+    if matches!(cue, Cue::Start) && !settings.general.ready_chime {
+        return;
+    }
     let path = cue.system_sound();
     // Volume scales 0.0–1.0 to afplay's -v 0..2 range (1.0 is full).
     let volume = settings.general.sound_volume.clamp(0.0, 1.0);
