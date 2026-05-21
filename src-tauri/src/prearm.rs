@@ -12,8 +12,14 @@
 //! recording starting, `wisspa://prewarm-cancel` tells the frontend to release
 //! the warm stream so the macOS mic indicator clears.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Runtime};
+
+/// Bumped on every start/stop. A monitor thread exits once it observes a
+/// generation different from its own, so toggling `fast_recording_start`
+/// (or changing hotkeys) applies live without an app restart.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
 
 // CGEventFlags modifier bit masks.
 const FLAG_SHIFT: u64 = 0x0002_0000;
@@ -52,14 +58,47 @@ pub fn modifier_mask(accelerator: &str) -> u64 {
     mask
 }
 
+/// Distinct non-zero modifier masks for the given hotkey accelerators.
+/// Accelerators with no modifier contribute nothing (they cannot be
+/// pre-warmed).
+pub fn collect_masks(accelerators: &[&str]) -> Vec<u64> {
+    let mut masks = Vec::new();
+    for acc in accelerators {
+        let m = modifier_mask(acc);
+        if m != 0 && !masks.contains(&m) {
+            masks.push(m);
+        }
+    }
+    masks
+}
+
+/// Stop any running monitor.
+pub fn stop() {
+    GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Apply the current `fast_recording_start` setting: (re)start the monitor
+/// with `masks` if enabled, stop it otherwise. Safe to call on every settings
+/// save — the generation counter makes any superseded monitor thread exit.
+pub fn apply<R: Runtime>(app: &AppHandle<R>, enabled: bool, masks: Vec<u64>) {
+    stop();
+    if enabled {
+        start(app.clone(), masks);
+    }
+}
+
 /// Spawn the modifier monitor. `masks` are the distinct modifier masks of the
-/// recording hotkeys; an empty list disables the monitor.
+/// recording hotkeys; an empty list disables the monitor. Prefer `apply`.
 pub fn start<R: Runtime>(app: AppHandle<R>, masks: Vec<u64>) {
     if masks.is_empty() {
         log::info!("prearm: no modifier-bearing hotkeys, monitor not started");
         return;
     }
-    log::info!("prearm: modifier monitor started ({} mask(s))", masks.len());
+    let my_gen = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    log::info!(
+        "prearm: modifier monitor started (gen {my_gen}, {} mask(s))",
+        masks.len()
+    );
 
     std::thread::spawn(move || {
         const POLL: Duration = Duration::from_millis(40);
@@ -76,6 +115,15 @@ pub fn start<R: Runtime>(app: AppHandle<R>, masks: Vec<u64>) {
 
         loop {
             std::thread::sleep(POLL);
+            // A newer generation means this monitor was superseded (setting
+            // toggled off, or restarted with new masks) — exit cleanly.
+            if GENERATION.load(Ordering::SeqCst) != my_gen {
+                if warm {
+                    let _ = app.emit("wisspa://prewarm-cancel", ());
+                }
+                log::info!("prearm: monitor gen {my_gen} exiting");
+                return;
+            }
             let mods = current_modifiers();
             let matched = mods != 0 && masks.iter().any(|m| *m == mods);
 
