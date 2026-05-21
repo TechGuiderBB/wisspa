@@ -32,7 +32,6 @@ export type Settings = {
     mic_sensitivity: MicSensitivity;
     notes_path: string;
     max_recording_seconds: number;
-    long_paste_threshold: number;
   };
   hotkeys: {
     dictation: string;
@@ -190,7 +189,11 @@ export async function reportSilentRecording(
 }
 
 export async function reportRecordingTimeout(maxSeconds: number): Promise<void> {
-  await invoke("report_recording_timeout", { maxSeconds });
+  // Send the field name explicitly in snake_case so this binding does not rely
+  // on Tauri's implicit camelCase→snake_case argument conversion. Removes a
+  // class of confusing "missing field max_seconds" runtime failures and makes
+  // the Rust↔JS contract obvious in either direction.
+  await invoke("report_recording_timeout", { max_seconds: maxSeconds });
 }
 
 /**
