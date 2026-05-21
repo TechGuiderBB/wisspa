@@ -27,6 +27,9 @@ const SAMPLE_INTERVAL_MS = 100;
 let mediaRecorder: MediaRecorder | null = null;
 let chunks: Blob[] = [];
 let activeStream: MediaStream | null = null;
+// Pre-warmed stream held open between a hotkey-modifier press and the full
+// combo, so `startRecording` can skip the cold getUserMedia. See prearm.rs.
+let warmStream: MediaStream | null = null;
 let analyserCtx: AudioContext | null = null;
 let analyser: AnalyserNode | null = null;
 let analyserBuffer: Uint8Array | null = null;
@@ -116,12 +119,43 @@ function teardownAnalyser() {
   analyserBuffer = null;
 }
 
+/// Open the mic stream ahead of a full hotkey press and retain it. No-op if a
+/// warm stream already exists or a recording is in progress.
+export async function warmMic(): Promise<void> {
+  if (warmStream || (mediaRecorder && mediaRecorder.state === "recording")) {
+    return;
+  }
+  try {
+    warmStream = await acquireHealthyStream();
+  } catch (err) {
+    console.warn("warmMic failed:", err);
+    warmStream = null;
+  }
+}
+
+/// Release a retained warm stream (closes the mic, clears the macOS indicator).
+/// Leaves a stream alone if it has already been promoted to the active
+/// recording stream.
+export function releaseWarmStream(): void {
+  if (warmStream && warmStream !== activeStream) {
+    warmStream.getTracks().forEach((t) => t.stop());
+  }
+  warmStream = null;
+}
+
 export async function startRecording(): Promise<void> {
   if (starting) return;
   if (mediaRecorder && mediaRecorder.state === "recording") return;
   starting = true;
   try {
-    const stream = await acquireHealthyStream();
+    let stream: MediaStream;
+    if (warmStream && warmStream.getAudioTracks()[0]?.readyState === "live") {
+      stream = warmStream;
+      warmStream = null;
+    } else {
+      releaseWarmStream();
+      stream = await acquireHealthyStream();
+    }
     activeStream = stream;
     chunks = [];
 
@@ -198,6 +232,7 @@ export function cancelRecording(): void {
   teardownAnalyser();
   activeStream?.getTracks().forEach((t) => t.stop());
   activeStream = null;
+  releaseWarmStream();
   mediaRecorder = null;
   chunks = [];
   stopPromise = null;

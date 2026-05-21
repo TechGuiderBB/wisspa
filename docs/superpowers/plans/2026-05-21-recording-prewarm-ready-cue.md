@@ -289,9 +289,19 @@ git commit -m "feat: ready chime toggle in General settings"
 
 ## Layer 2 — Pre-warm (opt-in)
 
-### Task 8: Verify the Input Monitoring permission requirement
+### Task 8: Verify the modifier-detection mechanism and its permission
 
-- [ ] Confirm whether a listen-only `CGEventTap` for `flagsChanged` works under Wisspa's current grants, or triggers the Input Monitoring prompt. This decides whether the onboarding/permission step (Task 12) is needed. Update this plan with the finding before continuing.
+Mechanism decision (revised after Layer 1): prefer **polling `NSEvent`'s
+current modifier flags** on a short timer over a `CGEventTap`. A `CGEventTap`
+observes the keystroke stream and requires the macOS Input Monitoring
+permission. Reading the *current* modifier state is not keystroke monitoring
+and is expected to need no new permission. Polling at ~40 ms adds negligible
+latency next to the 200-800 ms cold-start being eliminated.
+
+- [ ] On the dev machine, confirm whether reading the current modifier flags
+  from a background/main thread works under Wisspa's existing grants without a
+  new permission prompt. If a new permission is unavoidable, fall back to the
+  opt-in + onboarding step (Task 12) and document it here.
 
 ### Task 9: `audio.ts` warm-stream slot
 

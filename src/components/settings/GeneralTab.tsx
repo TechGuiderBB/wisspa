@@ -115,6 +115,17 @@ export default function GeneralTab({ settings, patch }: Props) {
       </Row>
 
       <Row
+        label="Fast recording start"
+        hint="Warm the mic when you press the hotkey's modifier so recording starts instantly. The macOS mic indicator appears as you reach for the key. Takes effect after a restart."
+      >
+        <Toggle
+          checked={g.fast_recording_start}
+          onChange={(v) => patch({ fast_recording_start: v })}
+          label="Fast recording start"
+        />
+      </Row>
+
+      <Row
         label="Recording sounds"
         hint="Soft chimes when a recording starts, stops, is cancelled, or times out."
       >

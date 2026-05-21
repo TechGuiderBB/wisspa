@@ -12,6 +12,7 @@ mod keychain;
 mod llm;
 mod modes;
 mod permissions;
+mod prearm;
 mod selection;
 mod settings_store;
 mod sounds;
@@ -196,6 +197,20 @@ fn main() {
             app.handle().listen("wisspa://recording-armed", move |_| {
                 sounds::play(&armed_handle, sounds::Cue::Start);
             });
+            // Opt-in pre-warm: watch for the modifier portion of a recording
+            // hotkey so the mic can be warmed before the full combo completes.
+            if let Ok(s) = settings_store::load(&app.handle()) {
+                if s.general.fast_recording_start {
+                    let mut masks: Vec<u64> = Vec::new();
+                    for hk in [&s.hotkeys.dictation, &s.hotkeys.action, &s.hotkeys.prompt] {
+                        let m = prearm::modifier_mask(hk);
+                        if m != 0 && !masks.contains(&m) {
+                            masks.push(m);
+                        }
+                    }
+                    prearm::start(app.handle().clone(), masks);
+                }
+            }
             maybe_show_onboarding(&app.handle());
             Ok(())
         })
