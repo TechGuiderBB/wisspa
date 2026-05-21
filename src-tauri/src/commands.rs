@@ -33,7 +33,16 @@ pub fn save_settings<R: Runtime>(
     app: AppHandle<R>,
     settings: settings_store::Settings,
 ) -> Result<(), String> {
-    settings_store::save(&app, &settings).map_err(|e| format!("save settings: {e:#}"))
+    settings_store::save(&app, &settings).map_err(|e| format!("save settings: {e:#}"))?;
+    // Apply pre-warm changes live so `fast_recording_start` (and any hotkey
+    // change) takes effect without an app restart.
+    let masks = crate::prearm::collect_masks(&[
+        &settings.hotkeys.dictation,
+        &settings.hotkeys.action,
+        &settings.hotkeys.prompt,
+    ]);
+    crate::prearm::apply(&app, settings.general.fast_recording_start, masks);
+    Ok(())
 }
 
 #[tauri::command]

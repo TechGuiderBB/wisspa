@@ -12,6 +12,7 @@ mod keychain;
 mod llm;
 mod modes;
 mod permissions;
+mod prearm;
 mod selection;
 mod settings_store;
 mod sounds;
@@ -20,7 +21,7 @@ mod toast;
 mod tray;
 
 use std::path::PathBuf;
-use tauri::LogicalPosition;
+use tauri::{Listener, LogicalPosition};
 
 fn position_overlay_top_center<R: tauri::Runtime, M: tauri::Manager<R>>(app: &M) {
     if let Some(overlay) = app.get_webview_window("overlay") {
@@ -189,6 +190,23 @@ fn main() {
                 log::warn!("history init failed: {e:#}");
             }
             hotkeys::register_default_shortcuts(&app.handle())?;
+            // The "ready" chime plays when capture is genuinely live (the
+            // frontend emits this once MediaRecorder fires `onstart`), not at
+            // hotkey-press time — so the cue honestly means "speak now".
+            let armed_handle = app.handle().clone();
+            app.handle().listen("wisspa://recording-armed", move |_| {
+                sounds::play(&armed_handle, sounds::Cue::Start);
+            });
+            // Opt-in pre-warm: watch for the modifier portion of a recording
+            // hotkey so the mic can be warmed before the full combo completes.
+            if let Ok(s) = settings_store::load(&app.handle()) {
+                let masks = prearm::collect_masks(&[
+                    &s.hotkeys.dictation,
+                    &s.hotkeys.action,
+                    &s.hotkeys.prompt,
+                ]);
+                prearm::apply(app.handle(), s.general.fast_recording_start, masks);
+            }
             maybe_show_onboarding(&app.handle());
             Ok(())
         })

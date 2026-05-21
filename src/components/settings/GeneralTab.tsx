@@ -115,6 +115,17 @@ export default function GeneralTab({ settings, patch }: Props) {
       </Row>
 
       <Row
+        label="Fast recording start"
+        hint="Warm the mic when you press the hotkey's modifier so recording starts instantly. The macOS mic indicator appears as you reach for the key."
+      >
+        <Toggle
+          checked={g.fast_recording_start}
+          onChange={(v) => patch({ fast_recording_start: v })}
+          label="Fast recording start"
+        />
+      </Row>
+
+      <Row
         label="Recording sounds"
         hint="Soft chimes when a recording starts, stops, is cancelled, or times out."
       >
@@ -126,16 +137,28 @@ export default function GeneralTab({ settings, patch }: Props) {
       </Row>
 
       {g.play_sounds && (
-        <Row label="Sound volume">
-          <Slider
-            value={g.sound_volume}
-            min={0}
-            max={1}
-            step={0.05}
-            onChange={(v) => patch({ sound_volume: v })}
-            format={(v) => `${Math.round(v * 100)}%`}
-          />
-        </Row>
+        <>
+          <Row label="Sound volume">
+            <Slider
+              value={g.sound_volume}
+              min={0}
+              max={1}
+              step={0.05}
+              onChange={(v) => patch({ sound_volume: v })}
+              format={(v) => `${Math.round(v * 100)}%`}
+            />
+          </Row>
+          <Row
+            label="Ready chime"
+            hint="Play a chime the moment the mic is live and ready for speech."
+          >
+            <Toggle
+              checked={g.ready_chime}
+              onChange={(v) => patch({ ready_chime: v })}
+              label="Ready chime"
+            />
+          </Row>
+        </>
       )}
 
       <Row label="Theme">

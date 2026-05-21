@@ -32,6 +32,8 @@ export type Settings = {
     mic_sensitivity: MicSensitivity;
     notes_path: string;
     max_recording_seconds: number;
+    ready_chime: boolean;
+    fast_recording_start: boolean;
   };
   hotkeys: {
     dictation: string;
