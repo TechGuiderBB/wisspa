@@ -7,6 +7,8 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 const SHELL_DENY: &[&str] = &[
     "sudo ",
     "rm -rf",
+    "rm -fr",
+    "rm -r ",
     "dd ",
     "mkfs",
     " :(){",
