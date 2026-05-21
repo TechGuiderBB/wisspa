@@ -38,6 +38,13 @@ pub struct General {
     /// Frontend auto-stops and reports to history after this many seconds.
     #[serde(default = "default_max_recording_seconds")]
     pub max_recording_seconds: u32,
+    /// Play the "ready" chime when capture goes live. Gated by play_sounds too.
+    #[serde(default = "default_ready_chime")]
+    pub ready_chime: bool,
+    /// Opt-in: warm the mic on the hotkey's modifier key-down (needs Input
+    /// Monitoring permission). Off by default.
+    #[serde(default = "default_fast_recording_start")]
+    pub fast_recording_start: bool,
 }
 
 fn default_mic_sensitivity() -> String {
@@ -46,6 +53,14 @@ fn default_mic_sensitivity() -> String {
 
 fn default_max_recording_seconds() -> u32 {
     30
+}
+
+fn default_ready_chime() -> bool {
+    true
+}
+
+fn default_fast_recording_start() -> bool {
+    false
 }
 
 fn default_notes_path() -> String {
@@ -102,6 +117,8 @@ impl Default for Settings {
                 mic_sensitivity: "medium".to_string(),
                 notes_path: default_notes_path(),
                 max_recording_seconds: default_max_recording_seconds(),
+                ready_chime: default_ready_chime(),
+                fast_recording_start: default_fast_recording_start(),
             },
             hotkeys: Hotkeys {
                 // Phase 1/2 ships with safe combos; PRD §4.2 defaults to `fn` etc.

@@ -6,6 +6,8 @@
 //   Returns { blob, peakAmplitude, durationMs } so App.tsx can apply the
 //   silence guard before invoking processAudio.
 
+import { emit } from "@tauri-apps/api/event";
+
 export class MicTrackUnhealthyError extends Error {
   constructor(reason: string) {
     super(`Mic track unhealthy: ${reason}`);
@@ -133,6 +135,10 @@ export async function startRecording(): Promise<void> {
 
     mediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+
+    mediaRecorder.onstart = () => {
+      void emit("wisspa://recording-armed");
     };
 
     stopPromise = new Promise<RecordingResult>((resolve) => {

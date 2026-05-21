@@ -68,7 +68,6 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 ("dictation", ShortcutState::Pressed) => {
                     log::info!("dictation hotkey pressed");
                     crate::app_detector::snapshot_target_app_now();
-                    crate::sounds::play(app, crate::sounds::Cue::Start);
                     show_overlay(app);
                     let _ = app.emit(EVENT_MODE, "dictation");
                     let _ = app.emit(EVENT_START, ());
@@ -82,7 +81,6 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 ("action", ShortcutState::Pressed) => {
                     log::info!("action hotkey pressed");
                     crate::app_detector::snapshot_target_app_now();
-                    crate::sounds::play(app, crate::sounds::Cue::Start);
                     show_overlay(app);
                     let _ = app.emit(EVENT_MODE, "action");
                     let _ = app.emit(EVENT_START, ());
@@ -96,7 +94,6 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 ("prompt", ShortcutState::Pressed) => {
                     log::info!("prompt hotkey pressed");
                     crate::app_detector::snapshot_target_app_now();
-                    crate::sounds::play(app, crate::sounds::Cue::Start);
                     show_overlay(app);
                     let _ = app.emit(EVENT_MODE, "prompt");
                     let _ = app.emit(EVENT_START, ());

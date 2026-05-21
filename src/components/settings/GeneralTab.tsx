@@ -126,16 +126,28 @@ export default function GeneralTab({ settings, patch }: Props) {
       </Row>
 
       {g.play_sounds && (
-        <Row label="Sound volume">
-          <Slider
-            value={g.sound_volume}
-            min={0}
-            max={1}
-            step={0.05}
-            onChange={(v) => patch({ sound_volume: v })}
-            format={(v) => `${Math.round(v * 100)}%`}
-          />
-        </Row>
+        <>
+          <Row label="Sound volume">
+            <Slider
+              value={g.sound_volume}
+              min={0}
+              max={1}
+              step={0.05}
+              onChange={(v) => patch({ sound_volume: v })}
+              format={(v) => `${Math.round(v * 100)}%`}
+            />
+          </Row>
+          <Row
+            label="Ready chime"
+            hint="Play a chime the moment the mic is live and ready for speech."
+          >
+            <Toggle
+              checked={g.ready_chime}
+              onChange={(v) => patch({ ready_chime: v })}
+              label="Ready chime"
+            />
+          </Row>
+        </>
       )}
 
       <Row label="Theme">
