@@ -37,8 +37,8 @@ fn check_shell(cmd: &str) -> Result<()> {
     // This makes deny patterns resilient to forms like `curl URL| sh` and
     // `curl URL |sh` in addition to tabs/double-spaces.
     let metachar_padded = cmd.replace('|', " | ");
-    // split_whitespace strips leading whitespace, so prepend a single space
-    // after normalization. That keeps leading-space deny tokens (e.g. " :(){")
+    // split_whitespace strips leading whitespace. We prepend a single space in
+    // the scan string below so leading-space deny tokens (e.g. " :(){") stay
     // matchable when the command starts with that pattern.
     let normalized = metachar_padded
         .split_whitespace()
