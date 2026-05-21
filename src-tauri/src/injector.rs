@@ -50,7 +50,19 @@ pub async fn inject_text<R: Runtime>(
 
     log::info!("inject step 1: reading clipboard");
     let clipboard = app.clipboard();
-    let prev = clipboard.read_text().ok();
+    // read_text() returns Err for an empty clipboard, for one holding
+    // non-text content (image, file), AND for transient plugin/OS failures.
+    // Keep `prev = None` in all error cases so we never restore garbage,
+    // but log the underlying error so a real read failure does not get
+    // silently labelled as "empty or non-text" in step 5's restore branch.
+    // Known limitation: clipboard-nontextcontent-lost-after-inject.
+    let prev = match clipboard.read_text() {
+        Ok(text) => Some(text),
+        Err(e) => {
+            log::debug!("clipboard read_text failed (treating as empty/non-text): {e}");
+            None
+        }
+    };
 
     log::info!("inject step 2: writing {} chars to clipboard", text.len());
     clipboard
@@ -78,6 +90,12 @@ pub async fn inject_text<R: Runtime>(
     log::info!("inject step 5: restoring previous clipboard");
     if let Some(prev_text) = prev {
         let _ = clipboard.write_text(prev_text);
+    } else {
+        // Clipboard was empty or held non-text content before injection.
+        // We cannot restore non-text content (images, files) with this API.
+        // Leave the clipboard holding the injected text rather than
+        // writing an empty string, so Cmd+V still works if the user pastes again.
+        log::debug!("clipboard pre-injection content was empty or non-text; not restoring");
     }
 
     log::info!("inject step 6: done");
