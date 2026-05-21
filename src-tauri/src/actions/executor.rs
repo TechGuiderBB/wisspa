@@ -40,12 +40,12 @@ fn check_shell(cmd: &str) -> Result<()> {
     // split_whitespace strips leading whitespace, so prepend a single space
     // after normalization. That keeps leading-space deny tokens (e.g. " :(){")
     // matchable when the command starts with that pattern.
-    let normalised = metachar_padded
+    let normalized = metachar_padded
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase();
-    let scan = format!(" {normalised}");
+    let scan = format!(" {normalized}");
     for bad in SHELL_DENY {
         if scan.contains(bad) {
             return Err(anyhow!("shell command rejected (contains '{bad}')"));
