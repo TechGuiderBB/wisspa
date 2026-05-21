@@ -33,13 +33,14 @@ pub fn validate(action: &Action) -> Result<()> {
 }
 
 fn check_shell(cmd: &str) -> Result<()> {
-    // Normalise runs of whitespace to single spaces so deny-list tokens like
-    // "sudo " and "rm -rf" can't be bypassed by inserting extra whitespace
-    // (e.g. "rm  -rf" or "sudo\tthing"). split_whitespace strips leading
-    // whitespace, so prepend a single space to the scan string. That way
-    // deny tokens that intentionally start with a space (e.g. " :(){" for
-    // the fork bomb) still match when the command begins with that pattern.
-    let normalised = cmd
+    // Normalize shell metachar spacing + runs of whitespace to single spaces.
+    // This makes deny patterns resilient to forms like `curl URL| sh` and
+    // `curl URL |sh` in addition to tabs/double-spaces.
+    let metachar_padded = cmd.replace('|', " | ");
+    // split_whitespace strips leading whitespace, so prepend a single space
+    // after normalization. That keeps leading-space deny tokens (e.g. " :(){")
+    // matchable when the command starts with that pattern.
+    let normalised = metachar_padded
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
