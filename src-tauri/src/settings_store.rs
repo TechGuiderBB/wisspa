@@ -41,8 +41,8 @@ pub struct General {
     /// Play the "ready" chime when capture goes live. Gated by play_sounds too.
     #[serde(default = "default_ready_chime")]
     pub ready_chime: bool,
-    /// Opt-in: warm the mic on the hotkey's modifier key-down (needs Input
-    /// Monitoring permission). Off by default.
+    /// Opt-in: warm the mic while the hotkey's modifier key is held, so
+    /// recording starts instantly. Off by default.
     #[serde(default = "default_fast_recording_start")]
     pub fast_recording_start: bool,
 }

@@ -423,15 +423,14 @@ git add src/App.tsx
 git commit -m "feat: warm mic on prewarm events"
 ```
 
-### Task 12: `fast_recording_start` toggle + permission guidance
+### Task 12: `fast_recording_start` toggle
 
 **Files:**
 - Modify: `src/components/settings/GeneralTab.tsx`
-- Modify: `src-tauri/Info.plist` (if Task 8 confirms Input Monitoring is required)
 
 - [ ] **Step 1: Add the toggle**
 
-Add a `Row` for `fast_recording_start` with a `Toggle` bound to `g.fast_recording_start`, hint: "Warm the mic when you press the hotkey's modifier so recording starts instantly. Needs macOS Input Monitoring permission; the mic indicator appears as you reach for the key." Note in the hint that a restart applies the change (the monitor is set up at launch).
+Add a `Row` for `fast_recording_start` with a `Toggle` bound to `g.fast_recording_start`, hint: "Warm the mic when you press the hotkey's modifier so recording starts instantly. The macOS mic indicator appears as you reach for the key." No new permission is required (the monitor polls `CGEventSourceFlagsState`), and the setting applies live — `save_settings` restarts the monitor via a generation counter, so no app restart is needed.
 
 - [ ] **Step 2: Verify**
 
@@ -440,13 +439,13 @@ Run: `pnpm tsc --noEmit && pnpm build` — Expected: PASS.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add src/components/settings/GeneralTab.tsx src-tauri/Info.plist
+git add src/components/settings/GeneralTab.tsx
 git commit -m "feat: fast recording start toggle"
 ```
 
 ### Task 13: Manual verification of Layer 2
 
-- [ ] Enable "Fast recording start", restart, grant Input Monitoring when prompted.
+- [ ] Enable "Fast recording start" — confirm it applies without an app restart.
 - [ ] Press and hold the hotkey modifier alone — the mic indicator appears; release — it clears within ~1s.
 - [ ] Complete the hotkey — capture is instant, no startup delay before the red cue.
 - [ ] Disable the setting / deny the permission — confirm Layer 1 still works and nothing errors.

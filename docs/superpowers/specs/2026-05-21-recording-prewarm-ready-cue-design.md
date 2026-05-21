@@ -66,8 +66,12 @@ cold. Layer 2 removes that wait.
 When the modifier portion of a recording hotkey is held, warm the mic so that
 completing the combo starts capture instantly.
 
-- New Rust module `src-tauri/src/prearm.rs`: a macOS modifier monitor
-  (`flagsChanged`, via `CGEventTap` listen-only or `NSEvent` global monitor).
+- New Rust module `src-tauri/src/prearm.rs`: a macOS modifier monitor.
+  **Implemented** by polling the current modifier state via
+  `CGEventSourceFlagsState` on a ~40 ms timer — this reads current state
+  only, not the keystroke stream, so it needs no Input Monitoring permission.
+  (A `CGEventTap` was considered first but rejected for exactly that
+  permission cost.)
 - On app start, compute the set of modifier combinations used by the three
   recording hotkeys (dictation / action / prompt) from settings. The cancel
   hotkey is excluded.
@@ -86,11 +90,9 @@ completing the combo starts capture instantly.
   Wisspa key.
 
 Opt-in: gated by a new setting `general.fast_recording_start` (default
-`false`). See Risks — this layer likely requires the macOS **Input Monitoring**
-permission, a separate grant from the four Wisspa already uses. When the user
-enables the setting, walk them through granting it (same pattern as the
-existing permissions panel). If the permission is absent the feature silently
-no-ops and Layer 1 still applies.
+`false`). As implemented (modifier-state polling) it needs no new macOS
+permission. The setting applies live — `save_settings` restarts the monitor
+via a generation counter, so no app restart is required.
 
 ## Files changed
 
@@ -146,20 +148,16 @@ No Rust test suite exists. Manual QA:
 - Record with immediate speech, Layer 1 only — confirm first words are present
   once the user waits for the red cue.
 - Toggle `ready_chime` off — confirm the flash still appears, no chime.
-- Enable `fast_recording_start`, grant Input Monitoring — confirm instant
-  capture and that the dot appears on modifier-down, clears on release.
-- Deny Input Monitoring — confirm graceful no-op.
+- Enable `fast_recording_start` — confirm instant capture and that the dot
+  appears on modifier-down, clears on release.
 - Re-run the relevant `README.md` v0.1.0 acceptance smoke tests.
 
 ## Risks and open questions
 
-1. **Input Monitoring permission (highest risk).** A global `flagsChanged`
-   monitor most likely requires the macOS Input Monitoring TCC permission,
-   separate from the Accessibility / Mic / Automation grants Wisspa already
-   uses. Must be verified early in implementation. If confirmed, Layer 2 stays
-   opt-in and the implementation plan must add the onboarding/permission step
-   and the Info.plist string. If a monitor can be done without it, the opt-in
-   can be relaxed later.
+1. **Input Monitoring permission — resolved.** A `CGEventTap` would have
+   needed the Input Monitoring TCC permission. The implementation instead
+   polls `CGEventSourceFlagsState` (current modifier state, not the keystroke
+   stream), which needs no new permission. Verified on-device.
 2. **Modifier-monitor false positives** on common modifiers — accepted and
    documented; mitigated by the max-warm timeout.
 3. **Chime default.** `ready_chime` defaults to `true` to preserve current

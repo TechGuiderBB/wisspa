@@ -6,14 +6,20 @@ export default function RecordingOverlay() {
   const [armed, setArmed] = useState(false);
 
   useEffect(() => {
+    // Cancellation-safe: React 18 StrictMode runs effect cleanup before the
+    // listen() promises resolve in dev, which would otherwise leak listeners.
+    let cancelled = false;
     const unlistens: Array<() => void> = [];
-    listen("wisspa://start-recording", () => setArmed(false)).then((u) =>
-      unlistens.push(u),
-    );
-    listen("wisspa://recording-armed", () => setArmed(true)).then((u) =>
-      unlistens.push(u),
-    );
-    return () => unlistens.forEach((u) => u());
+    const track = (u: () => void) => {
+      if (cancelled) u();
+      else unlistens.push(u);
+    };
+    listen("wisspa://start-recording", () => setArmed(false)).then(track);
+    listen("wisspa://recording-armed", () => setArmed(true)).then(track);
+    return () => {
+      cancelled = true;
+      unlistens.forEach((u) => u());
+    };
   }, []);
 
   return (

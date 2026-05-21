@@ -126,7 +126,20 @@ export async function warmMic(): Promise<void> {
     return;
   }
   try {
-    warmStream = await acquireHealthyStream();
+    const stream = await acquireHealthyStream();
+    // A recording may have started (cold) while getUserMedia was in flight.
+    // If so this warm stream is redundant — stop it now rather than orphan an
+    // open mic with no consumer, which would leave the indicator stuck on.
+    if (
+      warmStream ||
+      starting ||
+      activeStream ||
+      (mediaRecorder && mediaRecorder.state === "recording")
+    ) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    warmStream = stream;
   } catch (err) {
     console.warn("warmMic failed:", err);
     warmStream = null;
