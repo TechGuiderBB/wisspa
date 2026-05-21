@@ -112,6 +112,9 @@ pub fn start<R: Runtime>(app: AppHandle<R>, masks: Vec<u64>) {
         let mut warm = false;
         let mut warm_since: Option<Instant> = None;
         let mut released_at: Option<Instant> = None;
+        // Prevents immediate re-warm after MAX_WARM fires. Cleared only when
+        // the modifier is fully released, so the next press starts a fresh cycle.
+        let mut suppressed = false;
 
         loop {
             std::thread::sleep(POLL);
@@ -127,7 +130,11 @@ pub fn start<R: Runtime>(app: AppHandle<R>, masks: Vec<u64>) {
             let mods = current_modifiers();
             let matched = mods != 0 && masks.iter().any(|m| *m == mods);
 
-            if matched && !warm {
+            if !matched {
+                suppressed = false;
+            }
+
+            if matched && !warm && !suppressed {
                 warm = true;
                 warm_since = Some(Instant::now());
                 released_at = None;
@@ -137,6 +144,7 @@ pub fn start<R: Runtime>(app: AppHandle<R>, masks: Vec<u64>) {
                 if warm_since.map(|t| t.elapsed() >= MAX_WARM).unwrap_or(false) {
                     warm = false;
                     warm_since = None;
+                    suppressed = true;
                     let _ = app.emit("wisspa://prewarm-cancel", ());
                 }
             } else if !matched && warm {

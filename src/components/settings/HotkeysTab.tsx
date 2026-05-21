@@ -129,8 +129,11 @@ export default function HotkeysTab({ settings, patch }: Props) {
   }
 
   async function resetDefaults() {
+    // Single patch call so only one saveSettings fires — avoids stale-closure
+    // race where 4 separate patch()+persist() calls each spread from the same
+    // frozen `settings` prop and only the last write survives to disk.
+    patch(DEFAULTS);
     for (const a of HOTKEY_ACTIONS) {
-      patch({ [a]: DEFAULTS[a] } as Partial<Settings["hotkeys"]>);
       try {
         await updateHotkey(a, DEFAULTS[a]);
       } catch (err) {
