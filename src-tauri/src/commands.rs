@@ -329,7 +329,13 @@ pub async fn process_audio<R: Runtime>(
         return Ok(String::new());
     }
 
-    let transcript = settings_store::apply_vocabulary(&transcript, &settings.vocabulary);
+    // Vocabulary substitution is for dictation/prompt output only. Applying it
+    // before action matching would corrupt trigger-word lookups for any user
+    // whose vocabulary overlaps with their action triggers.
+    let transcript = match mode.as_str() {
+        "action" => transcript,
+        _ => settings_store::apply_vocabulary(&transcript, &settings.vocabulary),
+    };
 
     let started = std::time::Instant::now();
     // action mode returns (text, matched_action_id) so history can record which action ran.
