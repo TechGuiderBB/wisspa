@@ -194,6 +194,11 @@ pub struct WordCorrections {
     pub threshold: u32,
     /// Map from lowercased original word → correction entry.
     pub entries: HashMap<String, WordCorrectionEntry>,
+    /// Opt-in: after dictation, take an Accessibility snapshot of the focused
+    /// field and learn any single-word edits the user makes. The observed text
+    /// is used only transiently for diffing and is never persisted or sent anywhere.
+    #[serde(default)]
+    pub learn_from_edits: bool,
 }
 
 impl Default for WordCorrections {
@@ -202,6 +207,7 @@ impl Default for WordCorrections {
             enabled: true,
             threshold: 3,
             entries: HashMap::new(),
+            learn_from_edits: false,
         }
     }
 }
@@ -317,4 +323,43 @@ pub fn save<R: Runtime>(app: &AppHandle<R>, settings: &Settings) -> Result<()> {
     let json = serde_json::to_string_pretty(settings)?;
     std::fs::write(&path, json).context("write settings.json")?;
     Ok(())
+}
+
+/// Record a word correction (lowercased `original` → `replacement`), incrementing
+/// its count and flipping `auto_apply` once the threshold is reached.
+///
+/// Returns `(now_auto, just_crossed)`:
+/// - `now_auto`: true when `auto_apply` is currently active after this call
+/// - `just_crossed`: true when this call caused `auto_apply` to flip from false to true
+pub fn record_correction<R: Runtime>(
+    app: &AppHandle<R>,
+    original: &str,
+    replacement: &str,
+) -> Result<(bool, bool)> {
+    let key = original.trim().to_lowercase();
+    let replacement = replacement.trim().to_string();
+    if key.is_empty() || replacement.is_empty() {
+        return Err(anyhow::anyhow!("original and replacement must not be empty"));
+    }
+    let mut settings = load(app)?;
+    let threshold = settings.word_corrections.threshold;
+    let entry = settings
+        .word_corrections
+        .entries
+        .entry(key)
+        .or_insert_with(|| WordCorrectionEntry {
+            replacement: replacement.clone(),
+            count: 0,
+            auto_apply: false,
+        });
+    entry.replacement = replacement;
+    entry.count += 1;
+    let was_auto = entry.auto_apply;
+    if !entry.auto_apply && entry.count >= threshold {
+        entry.auto_apply = true;
+    }
+    let now_auto = entry.auto_apply;
+    let just_crossed = !was_auto && now_auto;
+    save(app, &settings)?;
+    Ok((now_auto, just_crossed))
 }
