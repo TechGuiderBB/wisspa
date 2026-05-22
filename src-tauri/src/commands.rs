@@ -266,14 +266,14 @@ pub async fn process_audio<R: Runtime>(
     log::info!("process_audio: {} bytes, mime={mime_type}", bytes.len());
 
     let groq_key = state.groq_key();
+    // `settings` is owned and lives for the whole function, so its fields can
+    // be borrowed directly (including across the await) — no clones needed.
     let settings = settings_store::load(&app).unwrap_or_default();
-    let stt_language = settings.stt.language.clone();
-    let stt_model = settings.stt.model.clone();
-    let vocabulary = settings.vocabulary.clone();
-    let vocab_hint: Option<String> = if vocabulary.is_empty() {
+    let vocab_hint: Option<String> = if settings.vocabulary.is_empty() {
         None
     } else {
-        let words: Vec<&str> = vocabulary
+        let words: Vec<&str> = settings
+            .vocabulary
             .iter()
             .map(|v| v.replace_with.as_str())
             .collect();
@@ -283,8 +283,8 @@ pub async fn process_audio<R: Runtime>(
         &groq_key,
         bytes,
         &mime_type,
-        &stt_language,
-        &stt_model,
+        &settings.stt.language,
+        &settings.stt.model,
         vocab_hint.as_deref(),
     )
     .await
@@ -329,7 +329,7 @@ pub async fn process_audio<R: Runtime>(
         return Ok(String::new());
     }
 
-    let transcript = settings_store::apply_vocabulary(&transcript, &vocabulary);
+    let transcript = settings_store::apply_vocabulary(&transcript, &settings.vocabulary);
 
     let started = std::time::Instant::now();
     // action mode returns (text, matched_action_id) so history can record which action ran.

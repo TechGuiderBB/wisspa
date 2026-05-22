@@ -61,7 +61,7 @@ export default function VocabTab({ settings, onUpdate }: Props) {
                 <button
                   type="button"
                   onClick={() => removeEntry(i)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity text-neutral-400 hover:text-red-500 text-xs px-1"
+                  className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity text-neutral-400 hover:text-red-500 text-xs px-1"
                   aria-label="Remove entry"
                 >
                   ✕

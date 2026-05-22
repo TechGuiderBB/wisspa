@@ -39,6 +39,13 @@ pub fn apply_vocabulary(text: &str, vocab: &[VocabEntry]) -> String {
     result
 }
 
+/// A character that counts as part of a word for whole-word matching.
+/// Digits and `_` are included so `whisper2` and `leaseR_test` are not
+/// treated as the bare words `whisper` / `leaseR`.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
 fn replace_word_ci(text: &str, from: &str, to: &str) -> String {
     let from_lower = from.to_lowercase();
     let from_chars: Vec<char> = from_lower.chars().collect();
@@ -48,14 +55,14 @@ fn replace_word_ci(text: &str, from: &str, to: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
     while i < total {
-        let is_word_start = i == 0 || !chars[i - 1].is_alphabetic();
+        let is_word_start = i == 0 || !is_word_char(chars[i - 1]);
         if is_word_start && i + from_len <= total {
             let slice_lower: String = chars[i..i + from_len]
                 .iter()
                 .collect::<String>()
                 .to_lowercase();
             let is_word_end =
-                i + from_len == total || !chars[i + from_len].is_alphabetic();
+                i + from_len == total || !is_word_char(chars[i + from_len]);
             if slice_lower == from_lower && is_word_end {
                 out.push_str(to);
                 i += from_len;
