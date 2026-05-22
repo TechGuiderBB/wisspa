@@ -65,6 +65,9 @@ function Runtime() {
   // Auto-stop timer for in-progress recordings — guardrail against
   // accidentally long captures (hotkey held while typing, etc).
   const recordingTimerRef = useRef<number | null>(null);
+  // Monotonic id for processAudio pipelines. A newer STOP bumps it; a stale
+  // completion checks it before applying transcript / clearing isProcessing.
+  const processIdRef = useRef(0);
   // Mode the in-flight recording is for. Set from `wisspa://recording-mode`
   // emitted by Rust at hotkey-press time; read at hotkey-release time.
   const modeRef = (Runtime as unknown as { _modeRef?: { current: RecordingMode } })
@@ -163,6 +166,9 @@ function Runtime() {
         clearTimeout(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
+      // Capture the mode up front: a MODE_EVENT arriving mid-pipeline must not
+      // change which mode this blob is reported, displayed, and processed as.
+      const mode = modeRef.current;
       try {
         const result = await stopRecording();
         setRecording(false);
@@ -182,7 +188,7 @@ function Runtime() {
                 `(thresholds peak=${thresholds.peak.toFixed(2)} bps=${thresholds.bytesPerSecond.toFixed(0)})`,
             );
             await reportSilentRecording(
-              modeRef.current,
+              mode,
               durationMs,
               peakAmplitude,
               blob.size,
@@ -192,17 +198,25 @@ function Runtime() {
         }
 
         const b64 = await blobToBase64(blob);
+        // Bump the pipeline id so an earlier in-flight processAudio (user
+        // started a second recording before this one finished) cannot apply
+        // its stale transcript or clear isProcessing out of order.
+        const processId = ++processIdRef.current;
         setIsProcessing(true);
-        setProcessingMode(modeRef.current);
+        setProcessingMode(mode);
         try {
           const transcript = await processAudio(
             b64,
             blob.type || "audio/webm",
-            modeRef.current,
+            mode,
           );
-          setTranscript(transcript);
+          if (processId === processIdRef.current) {
+            setTranscript(transcript);
+          }
         } finally {
-          setIsProcessing(false);
+          if (processId === processIdRef.current) {
+            setIsProcessing(false);
+          }
         }
       } catch (err) {
         setError(String(err));
