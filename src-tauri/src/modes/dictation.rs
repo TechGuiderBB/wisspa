@@ -24,7 +24,7 @@ pub struct DictationOutcome {
 /// Edge cases per PRD §5.1:
 ///   - Empty transcript → caller short-circuits before this is called.
 ///   - Long transcript (>2000) → process anyway, surface the warning to the caller.
-///   - LLM error → fall back to raw transcript with `cleaned = false`.
+///   - LLM error → fall back to the corrected transcript with `cleaned = false`.
 pub async fn run<R: Runtime>(
     app: &AppHandle<R>,
     anthropic_api_key: &str,
@@ -59,18 +59,21 @@ pub async fn run<R: Runtime>(
     let (final_text, cleaned, haiku_diverged) =
         match llm::haiku_cleanup_dictation(anthropic_api_key, &corrected_transcript, &active_app).await {
             Ok(haiku_out) => {
-                if diverges_from_raw(raw_transcript, &haiku_out) {
+                // Compare against the text Haiku actually saw (the corrected
+                // transcript). Using the raw transcript here would flag the
+                // user's own corrections as "divergence" and discard them.
+                if diverges_from_raw(&corrected_transcript, &haiku_out) {
                     log::warn!(
-                        "Haiku output diverged from raw transcript — falling back to raw. raw={raw_transcript:?} haiku={haiku_out:?}"
+                        "Haiku output diverged from transcript — falling back to corrected transcript. corrected={corrected_transcript:?} haiku={haiku_out:?}"
                     );
-                    (raw_transcript.to_string(), false, true)
+                    (corrected_transcript.clone(), false, true)
                 } else {
                     (haiku_out, true, false)
                 }
             }
             Err(e) => {
-                log::error!("Haiku cleanup failed, falling back to raw: {e:#}");
-                (raw_transcript.to_string(), false, false)
+                log::error!("Haiku cleanup failed, falling back to corrected transcript: {e:#}");
+                (corrected_transcript.clone(), false, false)
             }
         };
 
@@ -85,8 +88,10 @@ pub async fn run<R: Runtime>(
     })
 }
 
-/// Replace auto-apply corrections in `text`. Matches are case-insensitive,
-/// word-boundary aware (splits on non-alphabetic characters).
+/// Replace auto-apply corrections in `text`. Matches are case-insensitive and
+/// word-boundary aware: a word is a run of alphanumeric characters (plus
+/// apostrophes), so corrections like `gpt4` match but space-separated phrases
+/// are not supported.
 fn apply_corrections(
     text: &str,
     entries: &HashMap<String, settings_store::WordCorrectionEntry>,
@@ -103,10 +108,10 @@ fn apply_corrections(
     let mut result = String::with_capacity(text.len());
     let mut chars = text.char_indices().peekable();
     while let Some((start, c)) = chars.next() {
-        if c.is_alphabetic() {
+        if c.is_alphanumeric() {
             let mut end = start + c.len_utf8();
             while let Some(&(_, nc)) = chars.peek() {
-                if nc.is_alphabetic() || nc == '\'' {
+                if nc.is_alphanumeric() || nc == '\'' {
                     chars.next();
                     end += nc.len_utf8();
                 } else {

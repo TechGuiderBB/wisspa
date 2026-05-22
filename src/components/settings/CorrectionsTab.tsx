@@ -3,7 +3,6 @@ import {
   WordCorrections,
   getWordCorrections,
   saveWordCorrections,
-  submitWordCorrection,
 } from "../../lib/settings";
 import { Button, Row, Toggle } from "./ui";
 
@@ -13,6 +12,7 @@ export default function CorrectionsTab() {
   const [newReplacement, setNewReplacement] = useState("");
   const [busy, setBusy] = useState(false);
   const [addError, setAddError] = useState("");
+  const [listError, setListError] = useState("");
 
   async function refresh() {
     try {
@@ -34,7 +34,7 @@ export default function CorrectionsTab() {
   }
 
   async function onAdd() {
-    if (!corrections) return;
+    if (busy || !corrections) return;
     const orig = newOriginal.trim().toLowerCase();
     const repl = newReplacement.trim();
     if (!orig || !repl) {
@@ -44,18 +44,22 @@ export default function CorrectionsTab() {
     setAddError("");
     setBusy(true);
     try {
-      // Submit enough times to immediately reach auto-apply.
-      const threshold = corrections.threshold;
+      // An explicitly-added correction is active immediately. Write the entry
+      // directly with count pinned at the threshold rather than looping submit
+      // IPC calls — that would over-increment the learning count.
       const existing = corrections.entries[orig];
-      const needed = existing
-        ? Math.max(0, threshold - existing.count)
-        : threshold;
-      for (let i = 0; i < Math.max(1, needed); i++) {
-        await submitWordCorrection(orig, repl);
-      }
+      const count = Math.max(corrections.threshold, existing?.count ?? 0);
+      const next: WordCorrections = {
+        ...corrections,
+        entries: {
+          ...corrections.entries,
+          [orig]: { replacement: repl, count, auto_apply: true },
+        },
+      };
+      await saveWordCorrections(next);
+      setCorrections(next);
       setNewOriginal("");
       setNewReplacement("");
-      await refresh();
     } catch (err) {
       setAddError(String(err));
     } finally {
@@ -64,7 +68,8 @@ export default function CorrectionsTab() {
   }
 
   async function onDelete(original: string) {
-    if (!corrections) return;
+    if (busy || !corrections) return;
+    setListError("");
     setBusy(true);
     try {
       const next: WordCorrections = {
@@ -75,6 +80,11 @@ export default function CorrectionsTab() {
       };
       await saveWordCorrections(next);
       setCorrections(next);
+    } catch (err) {
+      console.error("saveWordCorrections (delete) failed:", err);
+      setListError(`Could not remove correction: ${String(err)}`);
+      // Resync from disk so the row doesn't appear deleted when it isn't.
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -109,7 +119,7 @@ export default function CorrectionsTab() {
             onChange={(e) => {
               const next = {
                 ...corrections,
-                threshold: Math.max(1, Number(e.target.value)),
+                threshold: Math.min(10, Math.max(1, Number(e.target.value))),
               };
               setCorrections(next);
               saveWordCorrections(next).catch(console.error);
@@ -155,10 +165,12 @@ export default function CorrectionsTab() {
         <h3 className="text-sm font-semibold text-neutral-700 mb-3">
           Corrections ({entries.length})
         </h3>
+        {listError && (
+          <p className="text-xs text-red-500 mb-2">{listError}</p>
+        )}
         {entries.length === 0 ? (
           <p className="text-sm text-neutral-400">
-            No corrections yet. Add one above or Wisspa will learn from
-            repeated corrections.
+            No corrections yet. Add one above.
           </p>
         ) : (
           <div className="rounded-lg border border-neutral-200 overflow-hidden">
