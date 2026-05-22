@@ -177,6 +177,7 @@ pub async fn report_recording_timeout<R: Runtime>(
     max_seconds: u32,
 ) -> Result<(), String> {
     log::warn!("recording exceeded {max_seconds}s cap — auto-stopped by frontend timer");
+    crate::sounds::play(&app, crate::sounds::Cue::Timeout);
     let active_app = crate::app_detector::frontmost_app_name().await.ok();
     let _ = history::insert(history::NewEntry {
         mode: "timeout".to_string(),

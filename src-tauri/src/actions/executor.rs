@@ -3,10 +3,11 @@ use anyhow::{anyhow, Context, Result};
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-/// Tokens forbidden inside shell commands per PRD §5.2.3.
+/// Substring tokens forbidden inside shell commands per PRD §5.2.3.
+/// Recursive `rm` is intentionally NOT here — flag spelling/order/splitting
+/// makes it impossible to cover with fixed substrings; see `has_recursive_rm`.
 const SHELL_DENY: &[&str] = &[
     "sudo ",
-    "rm -rf",
     "dd ",
     "mkfs",
     " :(){",
@@ -20,6 +21,12 @@ const SHELL_DENY: &[&str] = &[
     "reboot",
     "killall",
 ];
+
+/// Command separators that begin a fresh command word. `|` is space-padded
+/// during normalization; `;`, `&&`, `||`, `&` are matched as standalone
+/// tokens (an un-spaced `;` stays attached to its operand, which at worst
+/// causes a conservative rejection — never a bypass).
+const CMD_SEPARATORS: &[&str] = &[";", "|", "||", "&", "&&"];
 
 /// Validate an action shape on registry load. Currently only enforces the
 /// shell allowlist for `shell`/`applescript` payloads; other types are
@@ -51,7 +58,44 @@ fn check_shell(cmd: &str) -> Result<()> {
             return Err(anyhow!("shell command rejected (contains '{bad}')"));
         }
     }
+    if has_recursive_rm(&normalized) {
+        return Err(anyhow!("shell command rejected (recursive rm)"));
+    }
     Ok(())
+}
+
+/// Detect a recursive `rm` regardless of how the flags are spelled, ordered,
+/// or split: `rm -rf`, `rm -fr`, `rm -r`, `rm -f -r`, `rm -i -R x`,
+/// `rm --recursive`, `rm --force --recursive`. Substring deny patterns cannot
+/// cover split/long flag forms — and lack word boundaries (`perform -fr`
+/// contains `rm -fr`) — so recursive `rm` gets a dedicated tokenizer.
+///
+/// `normalized` is whitespace-collapsed and lowercased, so tokens split cleanly
+/// on a single space and `-R` already reads as `-r`.
+fn has_recursive_rm(normalized: &str) -> bool {
+    let tokens: Vec<&str> = normalized.split(' ').filter(|t| !t.is_empty()).collect();
+    for (i, tok) in tokens.iter().enumerate() {
+        if *tok != "rm" {
+            continue;
+        }
+        // Scan this command's argument tokens until the next separator.
+        for arg in &tokens[i + 1..] {
+            if CMD_SEPARATORS.contains(arg) {
+                break;
+            }
+            let recursive = match arg.strip_prefix("--") {
+                // Long option: only `--recursive` implies recursion.
+                Some(_) => *arg == "--recursive",
+                // Short-flag cluster (e.g. `-rf`, `-fr`): any `r` means
+                // recursive. Operands and `--`-less long forms fall through.
+                None => arg.strip_prefix('-').is_some_and(|c| c.contains('r')),
+            };
+            if recursive {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn check_applescript(cmd: &str) -> Result<()> {
@@ -551,4 +595,55 @@ fn shellexpand_home(path: &str) -> String {
 
 fn dirs_home() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_shell;
+
+    fn rejected(cmd: &str) -> bool {
+        check_shell(cmd).is_err()
+    }
+
+    #[test]
+    fn blocks_recursive_rm_in_every_flag_form() {
+        for cmd in [
+            "rm -rf /tmp/x",
+            "rm -fr /tmp/x",
+            "rm -r /tmp/x",
+            "rm -R /tmp/x",
+            "rm -f -r /tmp/x",
+            "rm -r -f /tmp/x",
+            "rm -i -R /tmp/x",
+            "rm --recursive /tmp/x",
+            "rm --force --recursive /tmp/x",
+            "rm    -rf   /tmp/x",
+            "rm /tmp/x -r",
+            "ls && rm -rf /tmp/x",
+        ] {
+            assert!(rejected(cmd), "should reject recursive rm: {cmd}");
+        }
+    }
+
+    #[test]
+    fn allows_non_recursive_rm_and_lookalikes() {
+        for cmd in [
+            "rm /tmp/x",
+            "rm -f /tmp/x",
+            "rmdir /tmp/x",
+            // `perform -fr` contains the literal substring `rm -fr` but is not
+            // an `rm` command — the old substring deny-list false-positived.
+            "perform -fr task",
+            "echo rm is recursive",
+        ] {
+            assert!(!rejected(cmd), "should allow: {cmd}");
+        }
+    }
+
+    #[test]
+    fn still_blocks_other_deny_tokens() {
+        assert!(rejected("sudo reboot"));
+        assert!(rejected("curl|sh"));
+        assert!(rejected("curl | sh"));
+    }
 }
