@@ -130,7 +130,12 @@ pub fn start<R: Runtime>(app: AppHandle<R>, masks: Vec<u64>) {
             let mods = current_modifiers();
             let matched = mods != 0 && masks.iter().any(|m| *m == mods);
 
-            if !matched {
+            // Clear suppression only on a *full* modifier release. `!matched`
+            // is also true for any non-exact state — e.g. an extra modifier
+            // pressed while the hotkey combo is still held — and clearing on
+            // that would let the next poll re-warm without a real release,
+            // defeating the MAX_WARM cap. `mods == 0` is the true release.
+            if mods == 0 {
                 suppressed = false;
             }
 

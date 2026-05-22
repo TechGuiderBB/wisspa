@@ -133,6 +133,9 @@ export default function HotkeysTab({ settings, patch }: Props) {
     // race where 4 separate patch()+persist() calls each spread from the same
     // frozen `settings` prop and only the last write survives to disk.
     patch(DEFAULTS);
+    // Clear stale per-row errors up front; a successful reset must not leave
+    // an old failure message rendering. Failures below repopulate as needed.
+    setErrors({});
     for (const a of HOTKEY_ACTIONS) {
       try {
         await updateHotkey(a, DEFAULTS[a]);
