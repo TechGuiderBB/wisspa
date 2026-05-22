@@ -11,6 +11,29 @@
   animation: wisspa-flash 0.9s ease-in-out infinite;
 }
 
+@keyframes wisspa-thinking {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.7); opacity: 0.6; }
+}
+
+.wisspa-thinking {
+  animation: wisspa-thinking 0.75s ease-in-out infinite;
+}
+
+/* Honour the OS "reduce motion" setting. The thinking dot drops its scale
+   transform (the vestibular-triggering part) and falls back to the
+   opacity-only flash pulse; both indicators slow to a gentle fade so the
+   pill still reads as "active" without distracting movement. */
+@media (prefers-reduced-motion: reduce) {
+  .wisspa-flash {
+    animation-duration: 2s;
+  }
+  .wisspa-thinking {
+    animation-name: wisspa-flash;
+    animation-duration: 2s;
+  }
+}
+
 html,
 body,
 #root {
