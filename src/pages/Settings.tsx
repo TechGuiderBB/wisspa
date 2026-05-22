@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getSettings, saveSettings, type Settings } from "../lib/settings";
+import { getSettings, saveSettings, type Settings, type VocabEntry } from "../lib/settings";
 import GeneralTab from "../components/settings/GeneralTab";
 import ApiKeysTab from "../components/settings/ApiKeysTab";
 import HotkeysTab from "../components/settings/HotkeysTab";
@@ -7,6 +7,7 @@ import ActionsTab from "../components/settings/ActionsTab";
 import PromptModeTab from "../components/settings/PromptModeTab";
 import HistoryTab from "../components/settings/HistoryTab";
 import AboutTab from "../components/settings/AboutTab";
+import VocabTab from "../components/settings/VocabTab";
 
 type TabId =
   | "general"
@@ -14,6 +15,7 @@ type TabId =
   | "hotkeys"
   | "actions"
   | "prompt_mode"
+  | "vocab"
   | "history"
   | "about";
 
@@ -23,6 +25,7 @@ const TABS: { id: TabId; label: string; icon: string; subtitle: string }[] = [
   { id: "hotkeys", label: "Hotkeys", icon: "⌨", subtitle: "Triggers for each mode" },
   { id: "actions", label: "Actions", icon: "🪄", subtitle: "Voice commands" },
   { id: "prompt_mode", label: "Prompt Mode", icon: "✨", subtitle: "AI prompt rewrites" },
+  { id: "vocab", label: "Vocabulary", icon: "✏", subtitle: "Custom word corrections" },
   { id: "history", label: "History", icon: "🕘", subtitle: "Recent dictations" },
   { id: "about", label: "About", icon: "ℹ", subtitle: "Version & permissions" },
 ];
@@ -55,6 +58,10 @@ export default function SettingsPage() {
   function patchPromptMode(p: Partial<Settings["prompt_mode"]>) {
     if (!settings) return;
     persist({ ...settings, prompt_mode: { ...settings.prompt_mode, ...p } });
+  }
+  function patchVocab(vocabulary: VocabEntry[]) {
+    if (!settings) return;
+    persist({ ...settings, vocabulary });
   }
 
   if (!settings) {
@@ -133,6 +140,9 @@ export default function SettingsPage() {
           {active === "actions" && <ActionsTab />}
           {active === "prompt_mode" && (
             <PromptModeTab settings={settings} patch={patchPromptMode} />
+          )}
+          {active === "vocab" && (
+            <VocabTab settings={settings} onUpdate={patchVocab} />
           )}
           {active === "history" && <HistoryTab />}
           {active === "about" && <AboutTab />}

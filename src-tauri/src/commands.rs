@@ -1,7 +1,7 @@
 use crate::{
     actions::registry, history, hotkeys, keychain, modes::action as action_mode,
-    modes::dictation, modes::prompt as prompt_mode, permissions, settings_store,
-    settings_store::Settings, stt, toast, AppState,
+    modes::dictation, modes::prompt as prompt_mode, permissions, settings_store, stt, toast,
+    AppState,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
@@ -266,18 +266,26 @@ pub async fn process_audio<R: Runtime>(
     log::info!("process_audio: {} bytes, mime={mime_type}", bytes.len());
 
     let groq_key = state.groq_key();
-    let (stt_language, stt_model) = settings_store::load(&app)
-        .map(|s| (s.stt.language, s.stt.model))
-        .unwrap_or_else(|_| {
-            let d = Settings::default().stt;
-            (d.language, d.model)
-        });
+    let settings = settings_store::load(&app).unwrap_or_default();
+    let stt_language = settings.stt.language.clone();
+    let stt_model = settings.stt.model.clone();
+    let vocabulary = settings.vocabulary.clone();
+    let vocab_hint: Option<String> = if vocabulary.is_empty() {
+        None
+    } else {
+        let words: Vec<&str> = vocabulary
+            .iter()
+            .map(|v| v.replace_with.as_str())
+            .collect();
+        Some(words.join(", "))
+    };
     let transcript = match stt::transcribe_audio(
         &groq_key,
         bytes,
         &mime_type,
         &stt_language,
         &stt_model,
+        vocab_hint.as_deref(),
     )
     .await
     {
@@ -320,6 +328,8 @@ pub async fn process_audio<R: Runtime>(
         });
         return Ok(String::new());
     }
+
+    let transcript = settings_store::apply_vocabulary(&transcript, &vocabulary);
 
     let started = std::time::Instant::now();
     // action mode returns (text, matched_action_id) so history can record which action ran.
