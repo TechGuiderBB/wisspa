@@ -90,7 +90,18 @@ pub async fn run<R: Runtime>(
             "Prompt generated",
             &format!("Inserting in {}s — {preview}", pm.preview_timeout_seconds),
         );
-        tokio::time::sleep(Duration::from_secs(pm.preview_timeout_seconds as u64)).await;
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(pm.preview_timeout_seconds as u64);
+        loop {
+            if crate::hotkeys::is_preview_cancelled() {
+                log::info!("prompt preview cancelled via Esc");
+                return Err(anyhow::anyhow!("cancelled"));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
     injector::inject_text(app, &rewritten, inject_target.as_deref()).await?;

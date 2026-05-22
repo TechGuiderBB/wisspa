@@ -259,6 +259,7 @@ pub async fn process_audio<R: Runtime>(
     mode: Option<String>,
 ) -> Result<String, String> {
     let mode = mode.unwrap_or_else(|| "dictation".to_string());
+    crate::hotkeys::clear_preview_cancel();
     let bytes = STANDARD
         .decode(audio_b64.as_bytes())
         .map_err(|e| format!("base64 decode: {e}"))?;

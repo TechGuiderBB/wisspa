@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -11,6 +12,21 @@ pub const EVENT_CANCEL: &str = "wisspa://cancel-recording";
 pub const EVENT_MODE: &str = "wisspa://recording-mode";
 
 const OVERLAY_LABEL: &str = "overlay";
+
+// Set when Esc is pressed so an in-flight prompt preview sleep can abort.
+// Cleared at the start of every process_audio call so the flag never bleeds
+// into a subsequent recording.
+static PREVIEW_CANCEL: AtomicBool = AtomicBool::new(false);
+
+pub fn set_preview_cancel() {
+    PREVIEW_CANCEL.store(true, Ordering::SeqCst);
+}
+pub fn clear_preview_cancel() {
+    PREVIEW_CANCEL.store(false, Ordering::SeqCst);
+}
+pub fn is_preview_cancelled() -> bool {
+    PREVIEW_CANCEL.load(Ordering::SeqCst)
+}
 
 /// Action → currently registered shortcut. Used so the runtime handler can
 /// dispatch any registered shortcut to the right action even after reassignment.
@@ -109,6 +125,7 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     crate::app_detector::clear_target_app();
                     crate::sounds::play(app, crate::sounds::Cue::Cancel);
                     hide_overlay(app);
+                    set_preview_cancel();
                     let _ = app.emit(EVENT_CANCEL, ());
                 }
                 _ => {}
