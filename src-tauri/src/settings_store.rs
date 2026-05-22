@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, Runtime};
@@ -90,6 +91,8 @@ pub struct Settings {
     pub mic_calibration: Option<MicCalibration>,
     #[serde(default = "default_vocabulary")]
     pub vocabulary: Vec<VocabEntry>,
+    #[serde(default)]
+    pub word_corrections: WordCorrections,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +177,35 @@ pub struct Llm {
     pub model: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WordCorrectionEntry {
+    /// The word or phrase to use instead.
+    pub replacement: String,
+    /// How many times this correction has been submitted.
+    pub count: u32,
+    /// True once count reaches the threshold — applied automatically in dictation.
+    pub auto_apply: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WordCorrections {
+    pub enabled: bool,
+    /// Number of times a correction must be submitted before it auto-applies.
+    pub threshold: u32,
+    /// Map from lowercased original word → correction entry.
+    pub entries: HashMap<String, WordCorrectionEntry>,
+}
+
+impl Default for WordCorrections {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold: 3,
+            entries: HashMap::new(),
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -222,6 +254,7 @@ impl Default for Settings {
             onboarding_completed: false,
             mic_calibration: None,
             vocabulary: default_vocabulary(),
+            word_corrections: WordCorrections::default(),
         }
     }
 }
