@@ -4,6 +4,11 @@ export type RecordingMode = "press_and_hold" | "toggle";
 export type Theme = "system" | "light" | "dark";
 export type MicSensitivity = "off" | "low" | "medium" | "high";
 
+export type VocabEntry = {
+  spoken: string;
+  replace_with: string;
+};
+
 export const SENSITIVITY_MULTIPLIER: Record<MicSensitivity, number> = {
   off: 0, // 0 == disable silence guard entirely (sentinel value)
   low: 0.5,
@@ -52,6 +57,7 @@ export type Settings = {
   prompt_llm: { provider: string; model: string };
   onboarding_completed: boolean;
   mic_calibration: MicCalibration | null;
+  vocabulary: VocabEntry[];
 };
 
 export const HOTKEY_ACTIONS = ["dictation", "action", "prompt", "cancel"] as const;
