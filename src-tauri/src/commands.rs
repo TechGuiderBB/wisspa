@@ -1,7 +1,7 @@
 use crate::{
     actions::registry, history, hotkeys, keychain, modes::action as action_mode,
-    modes::dictation, modes::prompt as prompt_mode, permissions, settings_store,
-    settings_store::Settings, stt, toast, AppState,
+    modes::dictation, modes::prompt as prompt_mode, permissions, settings_store, stt, toast,
+    AppState,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
@@ -266,18 +266,26 @@ pub async fn process_audio<R: Runtime>(
     log::info!("process_audio: {} bytes, mime={mime_type}", bytes.len());
 
     let groq_key = state.groq_key();
-    let (stt_language, stt_model) = settings_store::load(&app)
-        .map(|s| (s.stt.language, s.stt.model))
-        .unwrap_or_else(|_| {
-            let d = Settings::default().stt;
-            (d.language, d.model)
-        });
+    // `settings` is owned and lives for the whole function, so its fields can
+    // be borrowed directly (including across the await) — no clones needed.
+    let settings = settings_store::load(&app).unwrap_or_default();
+    let vocab_hint: Option<String> = if settings.vocabulary.is_empty() {
+        None
+    } else {
+        let words: Vec<&str> = settings
+            .vocabulary
+            .iter()
+            .map(|v| v.replace_with.as_str())
+            .collect();
+        Some(words.join(", "))
+    };
     let transcript = match stt::transcribe_audio(
         &groq_key,
         bytes,
         &mime_type,
-        &stt_language,
-        &stt_model,
+        &settings.stt.language,
+        &settings.stt.model,
+        vocab_hint.as_deref(),
     )
     .await
     {
@@ -320,6 +328,8 @@ pub async fn process_audio<R: Runtime>(
         });
         return Ok(String::new());
     }
+
+    let transcript = settings_store::apply_vocabulary(&transcript, &settings.vocabulary);
 
     let started = std::time::Instant::now();
     // action mode returns (text, matched_action_id) so history can record which action ran.

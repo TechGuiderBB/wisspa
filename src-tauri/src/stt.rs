@@ -28,6 +28,7 @@ pub async fn transcribe_audio(
     mime_type: &str,
     language: &str,
     model: &str,
+    vocab_hint: Option<&str>,
 ) -> Result<String> {
     if api_key.is_empty() {
         return Err(anyhow!("GROQ_API_KEY is empty"));
@@ -56,12 +57,17 @@ pub async fn transcribe_audio(
         .mime_str(&base_mime)
         .with_context(|| format!("invalid mime: {base_mime}"))?;
 
-    let form = Form::new()
+    let mut form = Form::new()
         .part("file", part)
         .text("model", model.to_string())
         .text("response_format", "json")
         .text("language", language.to_string())
         .text("temperature", "0");
+    if let Some(hint) = vocab_hint {
+        if !hint.is_empty() {
+            form = form.text("prompt", hint.to_string());
+        }
+    }
 
     let res = HTTP_CLIENT
         .post(GROQ_TRANSCRIBE_URL)

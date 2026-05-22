@@ -7,6 +7,75 @@ use tauri::{AppHandle, Manager, Runtime};
 const SETTINGS_FILE: &str = "settings.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VocabEntry {
+    pub spoken: String,
+    pub replace_with: String,
+}
+
+fn default_vocabulary() -> Vec<VocabEntry> {
+    vec![
+        VocabEntry {
+            spoken: "Lisa".to_string(),
+            replace_with: "LeaseR".to_string(),
+        },
+        VocabEntry {
+            spoken: "Whisper".to_string(),
+            replace_with: "Wisspa".to_string(),
+        },
+    ]
+}
+
+/// Replace occurrences of each `spoken` word with `replace_with`, matching
+/// whole words case-insensitively (so "whisper" and "Whisper" both become
+/// "Wisspa"). No regex crate required.
+pub fn apply_vocabulary(text: &str, vocab: &[VocabEntry]) -> String {
+    let mut result = text.to_string();
+    for entry in vocab {
+        if entry.spoken.is_empty() || entry.replace_with.is_empty() {
+            continue;
+        }
+        result = replace_word_ci(&result, &entry.spoken, &entry.replace_with);
+    }
+    result
+}
+
+/// A character that counts as part of a word for whole-word matching.
+/// Digits and `_` are included so `whisper2` and `leaseR_test` are not
+/// treated as the bare words `whisper` / `leaseR`.
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn replace_word_ci(text: &str, from: &str, to: &str) -> String {
+    let from_lower = from.to_lowercase();
+    let from_chars: Vec<char> = from_lower.chars().collect();
+    let from_len = from_chars.len();
+    let chars: Vec<char> = text.chars().collect();
+    let total = chars.len();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < total {
+        let is_word_start = i == 0 || !is_word_char(chars[i - 1]);
+        if is_word_start && i + from_len <= total {
+            let slice_lower: String = chars[i..i + from_len]
+                .iter()
+                .collect::<String>()
+                .to_lowercase();
+            let is_word_end =
+                i + from_len == total || !is_word_char(chars[i + from_len]);
+            if slice_lower == from_lower && is_word_end {
+                out.push_str(to);
+                i += from_len;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub version: u32,
     pub general: General,
@@ -19,6 +88,8 @@ pub struct Settings {
     pub onboarding_completed: bool,
     #[serde(default)]
     pub mic_calibration: Option<MicCalibration>,
+    #[serde(default = "default_vocabulary")]
+    pub vocabulary: Vec<VocabEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +221,7 @@ impl Default for Settings {
             },
             onboarding_completed: false,
             mic_calibration: None,
+            vocabulary: default_vocabulary(),
         }
     }
 }
