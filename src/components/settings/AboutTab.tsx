@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
@@ -24,6 +25,7 @@ export default function AboutTab() {
   const [perms, setPerms] = useState<PermissionsSnapshot | null>(null);
   const [cal, setCal] = useState<MicCalibration | null>(null);
   const [update, setUpdate] = useState<UpdateState>({ kind: "idle" });
+  const [appVersion, setAppVersion] = useState<string>("…");
 
   async function refresh() {
     try {
@@ -36,6 +38,7 @@ export default function AboutTab() {
   }
 
   useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
     refresh();
     const id = setInterval(refresh, 4000);
     return () => clearInterval(id);
@@ -63,7 +66,7 @@ export default function AboutTab() {
     try {
       const result = await check();
       if (!result) {
-        setUpdate({ kind: "uptodate" });
+        setUpdate({ kind: "error", message: "Update no longer available — try checking again." });
         return;
       }
       let downloaded = 0;
@@ -95,7 +98,7 @@ export default function AboutTab() {
           <div>
             <div className="text-lg font-bold">Wisspa</div>
             <div className="text-xs opacity-90">
-              System-wide AI voice tool for macOS · v0.1.0
+              System-wide AI voice tool for macOS · v{appVersion}
             </div>
           </div>
         </div>
@@ -199,7 +202,7 @@ export default function AboutTab() {
 function UpdateLabel({ state }: { state: UpdateState }) {
   switch (state.kind) {
     case "idle":
-      return <span>You're on v0.1.0. Check for newer releases.</span>;
+      return <span>Check for newer releases.</span>;
     case "checking":
       return <span>Checking for updates…</span>;
     case "uptodate":
