@@ -58,6 +58,9 @@ function Runtime() {
   // Transient warning state shown directly on the always-visible pill so the
   // user gets feedback even if they missed the macOS notification banner.
   const [statusFlash, setStatusFlash] = useState<StatusFlash | null>(null);
+  // Processing state: true while awaiting STT/LLM after recording stops.
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingMode, setProcessingMode] = useState<RecordingMode>("dictation");
   const flashTimerRef = useRef<number | null>(null);
   // Auto-stop timer for in-progress recordings — guardrail against
   // accidentally long captures (hotkey held while typing, etc).
@@ -189,12 +192,18 @@ function Runtime() {
         }
 
         const b64 = await blobToBase64(blob);
-        const transcript = await processAudio(
-          b64,
-          blob.type || "audio/webm",
-          modeRef.current,
-        );
-        setTranscript(transcript);
+        setIsProcessing(true);
+        setProcessingMode(modeRef.current);
+        try {
+          const transcript = await processAudio(
+            b64,
+            blob.type || "audio/webm",
+            modeRef.current,
+          );
+          setTranscript(transcript);
+        } finally {
+          setIsProcessing(false);
+        }
       } catch (err) {
         setError(String(err));
         setRecording(false);
@@ -244,30 +253,44 @@ function Runtime() {
     };
   }, [setError, setRecording, setTranscript]);
 
-  // Pill state precedence: error flash > idle. Recording state is shown by
-  // the overlay window which stacks on top, so the runtime pill only renders
-  // idle + warning here.
+  // Pill state precedence: error flash > thinking > idle. Recording state is
+  // shown by the overlay window which stacks on top.
   const flashing = statusFlash !== null;
+  const thinking = isProcessing && !flashing;
+  const thinkingLabel =
+    processingMode === "prompt"
+      ? "Writing prompt..."
+      : processingMode === "action"
+        ? "Running..."
+        : "Transcribing...";
   return (
     <div className="h-screen w-screen flex items-center justify-center">
       <div
         className={`flex items-center gap-2 rounded-full px-4 py-2 backdrop-blur-md shadow-lg transition-colors duration-200 ${
-          flashing ? "bg-amber-500/85" : "bg-black/60"
+          flashing
+            ? "bg-amber-500/85"
+            : thinking
+              ? "bg-violet-600/80"
+              : "bg-black/60"
         }`}
       >
         <span
           className={`inline-block h-2.5 w-2.5 rounded-full ${
-            flashing ? "bg-white wisspa-flash" : "bg-white/40"
+            flashing
+              ? "bg-white wisspa-flash"
+              : thinking
+                ? "bg-white wisspa-thinking"
+                : "bg-white/40"
           }`}
         />
         <span
           className={`text-sm font-medium tracking-wide ${
-            flashing ? "text-white" : "text-white/80"
+            flashing || thinking ? "text-white" : "text-white/80"
           }`}
         >
-          {flashing ? statusFlash!.message : "Wisspa"}
+          {flashing ? statusFlash!.message : thinking ? thinkingLabel : "Wisspa"}
         </span>
-        {!flashing && lastError && (
+        {!flashing && !thinking && lastError && (
           <span className="text-red-400 text-[10px] truncate max-w-[80px]">
             {lastError}
           </span>

@@ -11,6 +11,15 @@
   animation: wisspa-flash 0.9s ease-in-out infinite;
 }
 
+@keyframes wisspa-thinking {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.7); opacity: 0.6; }
+}
+
+.wisspa-thinking {
+  animation: wisspa-thinking 0.75s ease-in-out infinite;
+}
+
 html,
 body,
 #root {
