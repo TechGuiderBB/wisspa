@@ -90,8 +90,10 @@ pub fn diff_corrections(
             }
 
             // Phonetically/visually close enough to be a real mishearing.
+            // Use char count (not byte len) so the threshold stays consistent
+            // with strsim::levenshtein, which counts Unicode scalar values.
             let dist = levenshtein(&heard_lower, &corrected_lower);
-            let max_dist = std::cmp::max(2, corrected.len() / 2);
+            let max_dist = std::cmp::max(2, corrected_lower.chars().count() / 2);
             if dist > max_dist {
                 return None;
             }
@@ -110,27 +112,28 @@ pub fn diff_corrections(
 }
 
 /// Returns true when `word` occurs as a whole word in `text` (both lowercased).
+/// Word-boundary definition matches `tokenize` — a char is "inside a word"
+/// if it is alphanumeric or an apostrophe. Uses `match_indices` so all
+/// boundary lookups land on UTF-8 char boundaries (the previous
+/// `start = abs + 1` byte-bump could land mid-codepoint on non-ASCII input
+/// and panic at runtime).
 fn contains_whole_word(text: &str, word: &str) -> bool {
     if word.is_empty() {
         return false;
     }
-    let word_len = word.len();
-    let text_bytes = text.as_bytes();
-    let mut start = 0;
-    while start + word_len <= text.len() {
-        match text[start..].find(word) {
-            None => break,
-            Some(pos) => {
-                let abs = start + pos;
-                let before_ok = abs == 0 || !text_bytes[abs - 1].is_ascii_alphanumeric();
-                let after = abs + word_len;
-                let after_ok =
-                    after >= text.len() || !text_bytes[after].is_ascii_alphanumeric();
-                if before_ok && after_ok {
-                    return true;
-                }
-                start = abs + 1;
-            }
+    let is_word_char = |c: char| c.is_alphanumeric() || c == '\'';
+    for (start, matched) in text.match_indices(word) {
+        let before_ok = match text[..start].chars().next_back() {
+            Some(c) => !is_word_char(c),
+            None => true,
+        };
+        let end = start + matched.len();
+        let after_ok = match text[end..].chars().next() {
+            Some(c) => !is_word_char(c),
+            None => true,
+        };
+        if before_ok && after_ok {
+            return true;
         }
     }
     false
@@ -214,6 +217,22 @@ mod tests {
             "hello world foo",
         );
         assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn non_ascii_input_does_not_panic() {
+        // Curly quotes, an em dash and an emoji are within range of what
+        // Whisper occasionally emits. Earlier byte-indexed code in
+        // contains_whole_word could panic mid-codepoint on inputs like
+        // these. Exercise the whole pipeline.
+        let candidates = diff_corrections(
+            "use the cloude api — it's great 🚀",
+            "use the Claude api — it's great 🚀",
+            "use the cloude api — it's great 🚀",
+        );
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].heard, "cloude");
+        assert_eq!(candidates[0].corrected, "Claude");
     }
 
     #[test]
