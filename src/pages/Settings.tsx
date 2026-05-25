@@ -6,6 +6,7 @@ import HotkeysTab from "../components/settings/HotkeysTab";
 import ActionsTab from "../components/settings/ActionsTab";
 import PromptModeTab from "../components/settings/PromptModeTab";
 import HistoryTab from "../components/settings/HistoryTab";
+import CorrectionsTab from "../components/settings/CorrectionsTab";
 import AboutTab from "../components/settings/AboutTab";
 import VocabTab from "../components/settings/VocabTab";
 
@@ -16,6 +17,7 @@ type TabId =
   | "actions"
   | "prompt_mode"
   | "vocab"
+  | "corrections"
   | "history"
   | "about";
 
@@ -26,6 +28,7 @@ const TABS: { id: TabId; label: string; icon: string; subtitle: string }[] = [
   { id: "actions", label: "Actions", icon: "🪄", subtitle: "Voice commands" },
   { id: "prompt_mode", label: "Prompt Mode", icon: "✨", subtitle: "AI prompt rewrites" },
   { id: "vocab", label: "Vocabulary", icon: "✏", subtitle: "Custom word corrections" },
+  { id: "corrections", label: "Corrections", icon: "🧠", subtitle: "Learned corrections" },
   { id: "history", label: "History", icon: "🕘", subtitle: "Recent dictations" },
   { id: "about", label: "About", icon: "ℹ", subtitle: "Version & permissions" },
 ];
@@ -144,6 +147,7 @@ export default function SettingsPage() {
           {active === "vocab" && (
             <VocabTab settings={settings} onUpdate={patchVocab} />
           )}
+          {active === "corrections" && <CorrectionsTab />}
           {active === "history" && <HistoryTab />}
           {active === "about" && <AboutTab />}
         </div>
