@@ -259,7 +259,6 @@ pub async fn process_audio<R: Runtime>(
     mode: Option<String>,
 ) -> Result<String, String> {
     let mode = mode.unwrap_or_else(|| "dictation".to_string());
-    crate::hotkeys::clear_preview_cancel();
     let bytes = STANDARD
         .decode(audio_b64.as_bytes())
         .map_err(|e| format!("base64 decode: {e}"))?;
@@ -357,6 +356,7 @@ pub async fn process_audio<R: Runtime>(
     let (status, output) = match &result {
         Ok(text) if !text.is_empty() => ("success", Some(text.clone())),
         Ok(_) => ("success", None),
+        Err(e) if e == crate::hotkeys::CANCELLED_MARKER => ("cancelled", None),
         Err(e) => ("failure", Some(e.clone())),
     };
     let _ = history::insert(history::NewEntry {
@@ -368,7 +368,12 @@ pub async fn process_audio<R: Runtime>(
         duration_ms: Some(duration_ms),
         status: status.to_string(),
     });
-    result
+    // User-initiated cancel is not an error from the frontend's perspective —
+    // suppress the Err so processAudio doesn't surface it as a failure.
+    match result {
+        Err(e) if e == crate::hotkeys::CANCELLED_MARKER => Ok(String::new()),
+        other => other,
+    }
 }
 
 async fn run_prompt_mode<R: Runtime>(
@@ -398,9 +403,14 @@ async fn run_prompt_mode<R: Runtime>(
             Ok(outcome.inserted)
         }
         Err(e) => {
+            let msg = format!("{e:#}");
+            if msg == crate::hotkeys::CANCELLED_MARKER {
+                log::info!("prompt cancelled by user (Esc)");
+                return Err(crate::hotkeys::CANCELLED_MARKER.to_string());
+            }
             log::error!("prompt mode failed: {e:#}");
-            toast::error(app, "Prompt failed", &format!("{e:#}"));
-            Err(format!("prompt: {e:#}"))
+            toast::error(app, "Prompt failed", &msg);
+            Err(format!("prompt: {msg}"))
         }
     }
 }
