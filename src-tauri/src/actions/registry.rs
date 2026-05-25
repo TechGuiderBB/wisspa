@@ -104,8 +104,12 @@ pub fn load_all(dir: &Path) -> Result<usize> {
     }
 
     let count = map.len();
-    if let Ok(mut w) = REGISTRY.write() {
-        *w = map;
+    match REGISTRY.write() {
+        Ok(mut w) => *w = map,
+        Err(e) => {
+            log::error!("action registry RwLock poisoned; reload aborted: {e}");
+            return Err(anyhow::anyhow!("registry lock poisoned"));
+        }
     }
     log::info!("loaded {count} actions ({} invalid)", invalid.len());
     Ok(count)
