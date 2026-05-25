@@ -90,7 +90,22 @@ pub async fn run<R: Runtime>(
             "Prompt generated",
             &format!("Inserting in {}s — {preview}", pm.preview_timeout_seconds),
         );
-        tokio::time::sleep(Duration::from_secs(pm.preview_timeout_seconds as u64)).await;
+        // Capture the cancel epoch at the start of the wait; any Esc press
+        // bumps it, so we see a mismatch and abort. Works under concurrent
+        // pipelines because every wait observes its own starting epoch.
+        let start_epoch = crate::hotkeys::current_cancel_epoch();
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(pm.preview_timeout_seconds as u64);
+        loop {
+            if crate::hotkeys::current_cancel_epoch() != start_epoch {
+                log::info!("prompt preview cancelled via Esc");
+                return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
 
     injector::inject_text(app, &rewritten, inject_target.as_deref()).await?;
