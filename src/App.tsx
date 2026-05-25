@@ -99,7 +99,6 @@ function Runtime() {
       .getUserMedia({ audio: true })
       .then((stream) => {
         stream.getTracks().forEach((t) => t.stop());
-        console.log("mic permission granted");
         void import("./lib/settings").then((m) => m.reportMicrophoneStatus(true));
       })
       .catch((err) => {

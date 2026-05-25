@@ -189,24 +189,37 @@ fn migrate_known_actions<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
     // When the user's file equals any of `past_defaults`, overwrite with `current`.
     // `current` is loaded via include_str! from the on-disk default so it stays
     // in sync whenever a shipped default action template changes.
-    let migrations: &[(&str, &[&str], &str)] = &[(
-        "new_note.yaml",
-        &[
-            // Original v0.1.0 hardcoded path; now superseded by
-            // $WISSPA_NOTES_PATH so the path is configurable in Settings.
-            "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to ~/Documents/voice-notes.md\"\ntriggers:\n  - \"new note\"\n  - \"make a note\"\ntype: shell\ncommand: \"echo \\\"{query}\\\" >> ~/Documents/voice-notes.md\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
-            // Intermediate 2-trigger variant tracked in this table previously
-            // but never matching the actually-shipped on-disk YAML — kept in
-            // case any user picked it up from a dev build.
-            "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to the file configured in Settings → Actions\"\ntriggers:\n  - \"new note\"\n  - \"make a note\"\ntype: shell\ncommand: 'mkdir -p \"$(dirname \"$WISSPA_NOTES_PATH\")\" && printf -- \"- %s\\n\" \"{query}\" >> \"$WISSPA_NOTES_PATH\"'\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
-            // Previous shipped default — 7 triggers + Inbox.md fallback with
-            // pre-quoted `"{query}"`. Stripped to bare `{query}` in this PR
-            // because the executor now POSIX-quotes substituted values for
-            // shell action types.
-            "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to the file configured in Settings → Actions\"\ntriggers:\n  - \"new note\"\n  - \"new notes\"\n  - \"make a note\"\n  - \"take a note\"\n  - \"knew note\"\n  - \"keynote\"\n  - \"you note\"\ntype: shell\ncommand: 'if [ -d \"$WISSPA_NOTES_PATH\" ]; then F=\"$WISSPA_NOTES_PATH/Inbox.md\"; else F=\"$WISSPA_NOTES_PATH\"; fi; mkdir -p \"$(dirname \"$F\")\" && printf -- \"- %s\\n\" \"{query}\" >> \"$F\"'\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
-        ],
-        include_str!("../../../default-actions/new_note.yaml"),
-    )];
+    let migrations: &[(&str, &[&str], &str)] = &[
+        (
+            "new_note.yaml",
+            &[
+                // Original v0.1.0 hardcoded path; now superseded by
+                // $WISSPA_NOTES_PATH so the path is configurable in Settings.
+                "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to ~/Documents/voice-notes.md\"\ntriggers:\n  - \"new note\"\n  - \"make a note\"\ntype: shell\ncommand: \"echo \\\"{query}\\\" >> ~/Documents/voice-notes.md\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
+                // Intermediate 2-trigger variant tracked in this table previously
+                // but never matching the actually-shipped on-disk YAML — kept in
+                // case any user picked it up from a dev build.
+                "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to the file configured in Settings → Actions\"\ntriggers:\n  - \"new note\"\n  - \"make a note\"\ntype: shell\ncommand: 'mkdir -p \"$(dirname \"$WISSPA_NOTES_PATH\")\" && printf -- \"- %s\\n\" \"{query}\" >> \"$WISSPA_NOTES_PATH\"'\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
+                // Previous shipped default — 7 triggers + Inbox.md fallback with
+                // pre-quoted `"{query}"`. Stripped to bare `{query}` in this PR
+                // because the executor now POSIX-quotes substituted values for
+                // shell action types.
+                "id: new_note\nname: \"New Voice Note\"\ndescription: \"Appends the spoken note to the file configured in Settings → Actions\"\ntriggers:\n  - \"new note\"\n  - \"new notes\"\n  - \"make a note\"\n  - \"take a note\"\n  - \"knew note\"\n  - \"keynote\"\n  - \"you note\"\ntype: shell\ncommand: 'if [ -d \"$WISSPA_NOTES_PATH\" ]; then F=\"$WISSPA_NOTES_PATH/Inbox.md\"; else F=\"$WISSPA_NOTES_PATH\"; fi; mkdir -p \"$(dirname \"$F\")\" && printf -- \"- %s\\n\" \"{query}\" >> \"$F\"'\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Note saved\"\nfailure_feedback: \"Could not save note\"\nenabled: true\n",
+            ],
+            include_str!("../../../default-actions/new_note.yaml"),
+        ),
+        (
+            // v0.1.0 shipped `fn+f11`, but the AppleScript keystroke layer
+            // rejects the `fn` modifier so the action never worked. Users who
+            // copied that broken default on first launch keep it forever
+            // unless we migrate it. Untouched user edits are preserved.
+            "show_desktop.yaml",
+            &[
+                "id: show_desktop\nname: \"Show Desktop\"\ndescription: \"Reveals the desktop (Mission Control gesture)\"\ntriggers:\n  - \"show desktop\"\ntype: keystroke\ncommand: \"fn+f11\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Showing desktop\"\nfailure_feedback: \"Could not show desktop\"\nenabled: true\n",
+            ],
+            include_str!("../../../default-actions/show_desktop.yaml"),
+        ),
+    ];
 
     for (filename, past_defaults, current) in migrations {
         let path = user_dir.join(filename);
