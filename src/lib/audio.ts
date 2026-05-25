@@ -36,8 +36,8 @@ let analyserBuffer: Uint8Array | null = null;
 let analyserInterval: number | null = null;
 let peakAmplitude = 0;
 let startedAt = 0;
-let stopPromise: Promise<RecordingResult> | null = null;
-let stopResolver: ((r: RecordingResult) => void) | null = null;
+let stopPromise: Promise<RecordingResult | null> | null = null;
+let stopResolver: ((r: RecordingResult | null) => void) | null = null;
 let starting = false; // re-entrance guard — duplicate START events bail
 let stopping = false; // re-entrance guard — duplicate STOP events bail
 
@@ -188,7 +188,7 @@ export async function startRecording(): Promise<void> {
       void emit("wisspa://recording-armed");
     };
 
-    stopPromise = new Promise<RecordingResult>((resolve) => {
+    stopPromise = new Promise<RecordingResult | null>((resolve) => {
       stopResolver = resolve;
     });
 
@@ -227,6 +227,7 @@ export async function stopRecording(): Promise<RecordingResult | null> {
     const result = await pending;
     stopPromise = null;
     stopResolver = null;
+    if (!result) return null;
     return result;
   } finally {
     stopping = false;
@@ -235,6 +236,10 @@ export async function stopRecording(): Promise<RecordingResult | null> {
 
 export function cancelRecording(): void {
   if (!mediaRecorder) return;
+  // Unblock any stopRecording() that is awaiting the stop promise.
+  // Without this, a CANCEL_EVENT that races a STOP_EVENT leaves stopRecording
+  // hanging forever because onstop is cleared before MediaRecorder fires it.
+  stopResolver?.(null);
   try {
     mediaRecorder.ondataavailable = null;
     mediaRecorder.onstop = null;
