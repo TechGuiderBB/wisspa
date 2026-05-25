@@ -4,7 +4,7 @@ description: "Reveals the desktop (Mission Control gesture)"
 triggers:
   - "show desktop"
 type: keystroke
-command: "fn+f11"
+command: "f11"
 working_dir: null
 requires_permissions: []
 destructive: false
