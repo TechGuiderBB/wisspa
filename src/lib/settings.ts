@@ -196,6 +196,35 @@ export async function reportSilentRecording(
   });
 }
 
+export type WordCorrectionEntry = {
+  replacement: string;
+  count: number;
+  auto_apply: boolean;
+};
+
+export type WordCorrections = {
+  enabled: boolean;
+  threshold: number;
+  entries: Record<string, WordCorrectionEntry>;
+};
+
+export async function getWordCorrections(): Promise<WordCorrections> {
+  return await invoke<WordCorrections>("get_word_corrections");
+}
+
+export async function submitWordCorrection(
+  original: string,
+  replacement: string,
+): Promise<boolean> {
+  return await invoke<boolean>("submit_word_correction", { original, replacement });
+}
+
+export async function saveWordCorrections(
+  corrections: WordCorrections,
+): Promise<void> {
+  await invoke("save_word_corrections", { corrections });
+}
+
 export async function reportRecordingTimeout(maxSeconds: number): Promise<void> {
   // Send the field name explicitly in snake_case so this binding does not rely
   // on Tauri's implicit camelCase→snake_case argument conversion. Removes a

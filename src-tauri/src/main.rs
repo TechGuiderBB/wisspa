@@ -233,6 +233,9 @@ fn main() {
             commands::export_history_csv,
             commands::report_silent_recording,
             commands::report_recording_timeout,
+            commands::get_word_corrections,
+            commands::submit_word_correction,
+            commands::save_word_corrections,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
