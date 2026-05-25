@@ -33,6 +33,13 @@ export default function CorrectionsTab() {
     await saveWordCorrections(next).catch(console.error);
   }
 
+  async function onToggleLearnFromEdits() {
+    if (!corrections) return;
+    const next = { ...corrections, learn_from_edits: !corrections.learn_from_edits };
+    setCorrections(next);
+    await saveWordCorrections(next).catch(console.error);
+  }
+
   async function onAdd() {
     if (busy || !corrections) return;
     const orig = newOriginal.trim().toLowerCase();
@@ -106,6 +113,15 @@ export default function CorrectionsTab() {
           hint="Apply learned corrections automatically during dictation"
         >
           <Toggle checked={corrections.enabled} onChange={onToggleEnabled} />
+        </Row>
+        <Row
+          label="Learn from my edits"
+          hint="After dictation, watch the field for a few seconds and learn words you correct. Reads the focused field locally; nothing leaves your Mac."
+        >
+          <Toggle
+            checked={corrections.learn_from_edits}
+            onChange={onToggleLearnFromEdits}
+          />
         </Row>
         <Row
           label="Auto-apply threshold"

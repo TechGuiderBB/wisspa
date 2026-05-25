@@ -4,11 +4,13 @@
 mod actions;
 mod app_detector;
 mod audio;
+mod ax_snapshot;
 mod commands;
 mod history;
 mod hotkeys;
 mod injector;
 mod keychain;
+mod learning;
 mod llm;
 mod modes;
 mod permissions;

@@ -548,30 +548,9 @@ pub fn submit_word_correction<R: Runtime>(
     original: String,
     replacement: String,
 ) -> Result<bool, String> {
-    let key = original.trim().to_lowercase();
-    let replacement = replacement.trim().to_string();
-    if key.is_empty() || replacement.is_empty() {
-        return Err("original and replacement must not be empty".to_string());
-    }
-    let mut settings = settings_store::load(&app).map_err(|e| format!("{e:#}"))?;
-    let threshold = settings.word_corrections.threshold;
-    let entry = settings
-        .word_corrections
-        .entries
-        .entry(key)
-        .or_insert_with(|| settings_store::WordCorrectionEntry {
-            replacement: replacement.clone(),
-            count: 0,
-            auto_apply: false,
-        });
-    entry.replacement = replacement;
-    entry.count += 1;
-    if !entry.auto_apply && entry.count >= threshold {
-        entry.auto_apply = true;
-    }
-    let now_auto = entry.auto_apply;
-    settings_store::save(&app, &settings).map_err(|e| format!("{e:#}"))?;
-    Ok(now_auto)
+    settings_store::record_correction(&app, &original, &replacement)
+        .map(|(now_auto, _)| now_auto)
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Overwrite the full word corrections object — used by the settings UI.
