@@ -1,7 +1,10 @@
-use crate::{app_detector, injector, llm, settings_store};
+use crate::{app_detector, ax_snapshot, injector, learning, llm, settings_store, toast};
 use anyhow::Result;
 use std::collections::HashMap;
+use std::time::Duration;
 use tauri::{AppHandle, Runtime};
+
+const EDIT_SNAPSHOT_DELAY_SECS: u64 = 8;
 
 pub struct DictationOutcome {
     /// Final text inserted into the focused field.
@@ -47,12 +50,15 @@ pub async fn run<R: Runtime>(
     };
     log::info!("target app: {active_app}");
 
+    // Load settings once and reuse — both the correction-application step
+    // and the post-paste opt-in check below read word_corrections, so a
+    // single load avoids extra disk I/O and a TOCTOU window between them.
+    let word_corrections = settings_store::load(app).map(|s| s.word_corrections).ok();
+
     // Apply user-trained word corrections before LLM cleanup so Haiku sees
     // already-corrected text and produces better results.
-    let corrected_transcript = match settings_store::load(app) {
-        Ok(s) if s.word_corrections.enabled => {
-            apply_corrections(raw_transcript, &s.word_corrections.entries)
-        }
+    let corrected_transcript = match &word_corrections {
+        Some(wc) if wc.enabled => apply_corrections(raw_transcript, &wc.entries),
         _ => raw_transcript.to_string(),
     };
 
@@ -78,6 +84,23 @@ pub async fn run<R: Runtime>(
         };
 
     injector::inject_text(app, &final_text, Some(&active_app)).await?;
+
+    // Spawn auto-learn snapshot task if the user has opted in.
+    if let Some(wc) = &word_corrections {
+        if wc.enabled && wc.learn_from_edits {
+            let app_clone = app.clone();
+            let inserted = final_text.clone();
+            let raw = raw_transcript.to_string();
+            // Pass None when app detection failed so the focus-moved check
+            // is skipped — otherwise the placeholder "a macOS app" would
+            // never match the live frontmost app and auto-learn would
+            // silently no-op on the error path.
+            let target_app = if app_detected { Some(active_app.clone()) } else { None };
+            tauri::async_runtime::spawn(async move {
+                snapshot_and_learn(app_clone, inserted, raw, target_app).await;
+            });
+        }
+    }
 
     Ok(DictationOutcome {
         inserted: final_text,
@@ -180,4 +203,60 @@ fn content_words(s: &str) -> Vec<String> {
         .map(|w| w.to_lowercase())
         .filter(|w| !STOP.contains(&w.as_str()))
         .collect()
+}
+
+/// Background task: wait, snapshot the focused field, diff against what we
+/// pasted, and feed any valid single-word corrections into the learning system.
+/// Every error path is silent — never crashes, never shows UI noise.
+///
+/// `active_app` is `None` when initial detection failed; in that case we
+/// can't tell whether focus moved, so we skip the focus-changed gate and
+/// take the snapshot anyway rather than dropping the learning opportunity.
+async fn snapshot_and_learn<R: Runtime>(
+    app: AppHandle<R>,
+    inserted: String,
+    raw_transcript: String,
+    active_app: Option<String>,
+) {
+    tokio::time::sleep(Duration::from_secs(EDIT_SNAPSHOT_DELAY_SECS)).await;
+
+    // Abort if focus moved to a different app — but only when we have a
+    // known starting app to compare against.
+    if let Some(expected) = active_app.as_deref() {
+        match app_detector::frontmost_app_name().await {
+            Ok(current) if current != expected => {
+                log::debug!("auto-learn: focus moved to '{current}', skipping snapshot");
+                return;
+            }
+            Err(e) => {
+                log::debug!("auto-learn: frontmost app check failed: {e:#}");
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    let field = match ax_snapshot::focused_field_value() {
+        Some(f) => f,
+        None => return,
+    };
+
+    let candidates = learning::diff_corrections(&inserted, &field.value, &raw_transcript);
+
+    for candidate in candidates {
+        match settings_store::record_correction(&app, &candidate.heard, &candidate.corrected) {
+            Ok((_, true)) => {
+                toast::info(
+                    &app,
+                    "Wisspa learned a correction",
+                    &format!(
+                        "Will now auto-correct \"{}\" → \"{}\"",
+                        candidate.heard, candidate.corrected
+                    ),
+                );
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!("auto-learn: record_correction failed: {e:#}"),
+        }
+    }
 }

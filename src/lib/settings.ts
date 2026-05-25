@@ -206,6 +206,7 @@ export type WordCorrections = {
   enabled: boolean;
   threshold: number;
   entries: Record<string, WordCorrectionEntry>;
+  learn_from_edits: boolean;
 };
 
 export async function getWordCorrections(): Promise<WordCorrections> {

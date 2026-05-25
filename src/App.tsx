@@ -228,8 +228,12 @@ function Runtime() {
         clearTimeout(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
+      // Bump the pipeline id so any in-flight processAudio that started before
+      // Esc was pressed discards its result instead of injecting stale text.
+      processIdRef.current++;
       cancelRecording();
       setRecording(false);
+      setIsProcessing(false);
     }).then(track);
 
     // Opt-in pre-warm (fast_recording_start): the Rust modifier monitor warms
