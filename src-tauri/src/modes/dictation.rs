@@ -1,5 +1,6 @@
-use crate::{app_detector, injector, llm};
+use crate::{app_detector, injector, llm, settings_store};
 use anyhow::Result;
+use std::collections::HashMap;
 use tauri::{AppHandle, Runtime};
 
 pub struct DictationOutcome {
@@ -23,7 +24,7 @@ pub struct DictationOutcome {
 /// Edge cases per PRD §5.1:
 ///   - Empty transcript → caller short-circuits before this is called.
 ///   - Long transcript (>2000) → process anyway, surface the warning to the caller.
-///   - LLM error → fall back to raw transcript with `cleaned = false`.
+///   - LLM error → fall back to the corrected transcript with `cleaned = false`.
 pub async fn run<R: Runtime>(
     app: &AppHandle<R>,
     anthropic_api_key: &str,
@@ -46,21 +47,33 @@ pub async fn run<R: Runtime>(
     };
     log::info!("target app: {active_app}");
 
+    // Apply user-trained word corrections before LLM cleanup so Haiku sees
+    // already-corrected text and produces better results.
+    let corrected_transcript = match settings_store::load(app) {
+        Ok(s) if s.word_corrections.enabled => {
+            apply_corrections(raw_transcript, &s.word_corrections.entries)
+        }
+        _ => raw_transcript.to_string(),
+    };
+
     let (final_text, cleaned, haiku_diverged) =
-        match llm::haiku_cleanup_dictation(anthropic_api_key, raw_transcript, &active_app).await {
+        match llm::haiku_cleanup_dictation(anthropic_api_key, &corrected_transcript, &active_app).await {
             Ok(haiku_out) => {
-                if diverges_from_raw(raw_transcript, &haiku_out) {
+                // Compare against the text Haiku actually saw (the corrected
+                // transcript). Using the raw transcript here would flag the
+                // user's own corrections as "divergence" and discard them.
+                if diverges_from_raw(&corrected_transcript, &haiku_out) {
                     log::warn!(
-                        "Haiku output diverged from raw transcript — falling back to raw. raw={raw_transcript:?} haiku={haiku_out:?}"
+                        "Haiku output diverged from transcript — falling back to corrected transcript. corrected={corrected_transcript:?} haiku={haiku_out:?}"
                     );
-                    (raw_transcript.to_string(), false, true)
+                    (corrected_transcript.clone(), false, true)
                 } else {
                     (haiku_out, true, false)
                 }
             }
             Err(e) => {
-                log::error!("Haiku cleanup failed, falling back to raw: {e:#}");
-                (raw_transcript.to_string(), false, false)
+                log::error!("Haiku cleanup failed, falling back to corrected transcript: {e:#}");
+                (corrected_transcript.clone(), false, false)
             }
         };
 
@@ -73,6 +86,50 @@ pub async fn run<R: Runtime>(
         long_transcript,
         haiku_diverged,
     })
+}
+
+/// Replace auto-apply corrections in `text`. Matches are case-insensitive and
+/// word-boundary aware: a word is a run of alphanumeric characters (plus
+/// apostrophes), so corrections like `gpt4` match but space-separated phrases
+/// are not supported.
+fn apply_corrections(
+    text: &str,
+    entries: &HashMap<String, settings_store::WordCorrectionEntry>,
+) -> String {
+    let lookup: HashMap<String, &str> = entries
+        .iter()
+        .filter(|(_, e)| e.auto_apply)
+        .map(|(k, v)| (k.clone(), v.replacement.as_str()))
+        .collect();
+    if lookup.is_empty() {
+        return text.to_string();
+    }
+
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
+        if c.is_alphanumeric() {
+            let mut end = start + c.len_utf8();
+            while let Some(&(_, nc)) = chars.peek() {
+                if nc.is_alphanumeric() || nc == '\'' {
+                    chars.next();
+                    end += nc.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let word = &text[start..end];
+            let lower = word.to_lowercase();
+            if let Some(&replacement) = lookup.get(&lower) {
+                result.push_str(replacement);
+            } else {
+                result.push_str(word);
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 /// Decide whether Haiku's output is faithful to the raw Whisper transcript.

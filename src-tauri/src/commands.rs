@@ -356,6 +356,7 @@ pub async fn process_audio<R: Runtime>(
     let (status, output) = match &result {
         Ok(text) if !text.is_empty() => ("success", Some(text.clone())),
         Ok(_) => ("success", None),
+        Err(e) if e == crate::hotkeys::CANCELLED_MARKER => ("cancelled", None),
         Err(e) => ("failure", Some(e.clone())),
     };
     let _ = history::insert(history::NewEntry {
@@ -367,7 +368,12 @@ pub async fn process_audio<R: Runtime>(
         duration_ms: Some(duration_ms),
         status: status.to_string(),
     });
-    result
+    // User-initiated cancel is not an error from the frontend's perspective —
+    // suppress the Err so processAudio doesn't surface it as a failure.
+    match result {
+        Err(e) if e == crate::hotkeys::CANCELLED_MARKER => Ok(String::new()),
+        other => other,
+    }
 }
 
 async fn run_prompt_mode<R: Runtime>(
@@ -397,9 +403,14 @@ async fn run_prompt_mode<R: Runtime>(
             Ok(outcome.inserted)
         }
         Err(e) => {
+            let msg = format!("{e:#}");
+            if msg == crate::hotkeys::CANCELLED_MARKER {
+                log::info!("prompt cancelled by user (Esc)");
+                return Err(crate::hotkeys::CANCELLED_MARKER.to_string());
+            }
             log::error!("prompt mode failed: {e:#}");
-            toast::error(app, "Prompt failed", &format!("{e:#}"));
-            Err(format!("prompt: {e:#}"))
+            toast::error(app, "Prompt failed", &msg);
+            Err(format!("prompt: {msg}"))
         }
     }
 }
@@ -515,4 +526,61 @@ fn preview(text: &str) -> String {
         let cut: String = trimmed.chars().take(MAX).collect();
         format!("{cut}…")
     }
+}
+
+// ── Word corrections ────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_word_corrections<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<settings_store::WordCorrections, String> {
+    settings_store::load(&app)
+        .map(|s| s.word_corrections)
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// Record a correction (original → replacement). Increments the count; marks
+/// `auto_apply` once count reaches the configured threshold. Returns whether
+/// this correction is now auto-applying.
+#[tauri::command]
+pub fn submit_word_correction<R: Runtime>(
+    app: AppHandle<R>,
+    original: String,
+    replacement: String,
+) -> Result<bool, String> {
+    let key = original.trim().to_lowercase();
+    let replacement = replacement.trim().to_string();
+    if key.is_empty() || replacement.is_empty() {
+        return Err("original and replacement must not be empty".to_string());
+    }
+    let mut settings = settings_store::load(&app).map_err(|e| format!("{e:#}"))?;
+    let threshold = settings.word_corrections.threshold;
+    let entry = settings
+        .word_corrections
+        .entries
+        .entry(key)
+        .or_insert_with(|| settings_store::WordCorrectionEntry {
+            replacement: replacement.clone(),
+            count: 0,
+            auto_apply: false,
+        });
+    entry.replacement = replacement;
+    entry.count += 1;
+    if !entry.auto_apply && entry.count >= threshold {
+        entry.auto_apply = true;
+    }
+    let now_auto = entry.auto_apply;
+    settings_store::save(&app, &settings).map_err(|e| format!("{e:#}"))?;
+    Ok(now_auto)
+}
+
+/// Overwrite the full word corrections object — used by the settings UI.
+#[tauri::command]
+pub fn save_word_corrections<R: Runtime>(
+    app: AppHandle<R>,
+    corrections: settings_store::WordCorrections,
+) -> Result<(), String> {
+    let mut settings = settings_store::load(&app).map_err(|e| format!("{e:#}"))?;
+    settings.word_corrections = corrections;
+    settings_store::save(&app, &settings).map_err(|e| format!("{e:#}"))
 }
