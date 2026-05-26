@@ -73,14 +73,26 @@ pub async fn haiku_cleanup_dictation(
 
 /// Run the Sonnet prompt-rewriter per PRD §5.3.1 / §7.2.
 /// `selected_text` is empty string when no selection was captured.
+/// `browser_context` is Some when the target app is a known browser and the
+/// active tab URL + title could be read. Sonnet uses URL + title as the
+/// primary signal for deciding whether to output a prompt (AI-tool
+/// destination) or the finished content (non-AI destination like Gmail).
 pub async fn sonnet_prompt_rewrite(
     api_key: &str,
     transcript: &str,
     active_app: &str,
+    browser_context: Option<&crate::app_detector::BrowserContext>,
     selected_text: &str,
 ) -> Result<String> {
+    let browser_lines = match browser_context {
+        Some(ctx) => format!(
+            "\nBrowser tab URL: {}\nBrowser tab title: {}",
+            ctx.url, ctx.title
+        ),
+        None => String::new(),
+    };
     let user_message = format!(
-        "Active app: {active_app}\n\nSelected text (if any):\n{selected_text}\n\nUser intent:\n{transcript}"
+        "Active app: {active_app}{browser_lines}\n\nSelected text (if any):\n{selected_text}\n\nUser intent:\n{transcript}"
     );
     call_anthropic(
         api_key,
