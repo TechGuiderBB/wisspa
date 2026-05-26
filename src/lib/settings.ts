@@ -39,6 +39,7 @@ export type Settings = {
     max_recording_seconds: number;
     ready_chime: boolean;
     fast_recording_start: boolean;
+    quiet_notifications: boolean;
   };
   hotkeys: {
     dictation: string;

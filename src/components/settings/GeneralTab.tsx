@@ -126,6 +126,17 @@ export default function GeneralTab({ settings, patch }: Props) {
       </Row>
 
       <Row
+        label="Quiet notifications"
+        hint="Suppress the macOS banners for inserts, raw paste warnings, and learned-correction confirmations. Errors still appear so you'll see real failures."
+      >
+        <Toggle
+          checked={g.quiet_notifications}
+          onChange={(v) => patch({ quiet_notifications: v })}
+          label="Quiet notifications"
+        />
+      </Row>
+
+      <Row
         label="Recording sounds"
         hint="Soft chimes when a recording starts, stops, is cancelled, or times out."
       >

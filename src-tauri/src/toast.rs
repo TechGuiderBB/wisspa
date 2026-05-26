@@ -13,14 +13,34 @@ fn show<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
     }
 }
 
+/// Honour the user's "Quiet notifications" preference. Read on every call —
+/// settings.json loads are cheap and we don't have an in-memory cache to
+/// invalidate when the toggle flips from the settings UI. Failures to load
+/// default to "not quiet" so a corrupt settings file still surfaces toasts.
+fn is_quiet<R: Runtime>(app: &AppHandle<R>) -> bool {
+    crate::settings_store::load(app)
+        .map(|s| s.general.quiet_notifications)
+        .unwrap_or(false)
+}
+
 pub fn info<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
+    if is_quiet(app) {
+        log::debug!("toast suppressed (quiet_notifications): info {title}");
+        return;
+    }
     show(app, title, body);
 }
 
 pub fn warn<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
+    if is_quiet(app) {
+        log::debug!("toast suppressed (quiet_notifications): warn {title}");
+        return;
+    }
     show(app, &format!("⚠ {title}"), body);
 }
 
+/// Error toasts ignore `quiet_notifications` — a silent failure is exactly
+/// the failure mode the toggle existed to avoid. Real errors always fire.
 pub fn error<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
     show(app, &format!("✗ {title}"), body);
 }
