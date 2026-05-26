@@ -28,14 +28,25 @@ pub async fn frontmost_app_name() -> Result<String> {
     Ok(name)
 }
 
-/// Bring an application to the foreground via AppleScript. Used to restore
-/// the user's original focus before pasting, in case another app stole
-/// focus when our global hotkey fired (e.g. Perplexity intercepting
-/// Cmd+Shift+P alongside Wisspa).
+/// Bring an application to the foreground. Used to restore the user's
+/// original focus before pasting, in case another app stole focus when the
+/// global hotkey fired (e.g. Perplexity intercepting Cmd+Shift+P).
+///
+/// Uses System Events GUI scripting (`set frontmost to true` on the target
+/// *process*) rather than a direct `tell application "X" to activate`. The
+/// direct activate is an Apple Event to the target app and requires a
+/// per-target Automation permission — but macOS silently skips the TCC
+/// prompt when the target app is already frontmost, so Wisspa never gets
+/// added to e.g. Chrome's Automation list and the activate permanently
+/// no-ops the moment focus drifts. The GUI-scripting path routes through
+/// System Events (Wisspa already holds that Automation grant) and works
+/// for any process the user can see.
 pub async fn activate_app(name: &str) -> Result<()> {
     // Escape any embedded quotes so the AppleScript stays valid.
     let safe = name.replace('"', "\\\"");
-    let script = format!(r#"tell application "{safe}" to activate"#);
+    let script = format!(
+        r#"tell application "System Events" to tell process "{safe}" to set frontmost to true"#
+    );
     let output = tokio::process::Command::new("osascript")
         .args(["-e", &script])
         .output()

@@ -71,13 +71,19 @@ pub async fn inject_text<R: Runtime>(
 
     if let Some(name) = target_app {
         log::info!("inject step 2b: re-activating target app '{name}'");
-        if let Err(e) = crate::app_detector::activate_app(name).await {
-            log::warn!("activate_app({name}) failed (continuing anyway): {e:#}");
-        }
-        // Give the OS a moment to bring the app forward and shift keyboard
-        // focus into its focused field. Without this Cmd+V can land before
-        // the activation completes.
-        tokio::time::sleep(Duration::from_millis(120)).await;
+        // Hard error: a silent activate failure here is the difference between
+        // pasting into Chrome and pasting into whatever else macOS thinks is
+        // frontmost. Caller writes the failure into history so the user sees
+        // status=failed instead of a successful-looking ghost paste.
+        crate::app_detector::activate_app(name)
+            .await
+            .with_context(|| format!("could not re-activate target app '{name}'"))?;
+        // Give the OS time to bring the app forward and shift keyboard focus
+        // into its focused field. 200ms covers browsers on macOS 26 where the
+        // window-activation animation is meaningfully slower than older
+        // releases; under this bar, Cmd+V occasionally lands a tick before
+        // the target's first responder is ready.
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
     log::info!("inject step 3: dispatching Cmd+V via AppleScript");
@@ -102,6 +108,13 @@ pub async fn inject_text<R: Runtime>(
     Ok(())
 }
 
+/// Synthesise Cmd+V via AppleScript / System Events. We intentionally do
+/// NOT use `enigo::CGEventPost` for this on macOS: enigo's keystroke path
+/// aborts the host process even with Accessibility granted, bypassing
+/// `catch_unwind` (see `DECISIONS.md` item 9 + the Gotchas in CLAUDE.md).
+/// AppleScript via osascript is the macOS-blessed paste path. enigo
+/// remains the right tool for the `keystroke` action type, but that runs
+/// in an isolated child process where an abort can't take the host down.
 async fn send_cmd_v_applescript() -> Result<()> {
     let output = tokio::process::Command::new("osascript")
         .args([
