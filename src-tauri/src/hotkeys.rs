@@ -64,6 +64,11 @@ fn lookup_action(shortcut: &Shortcut) -> Option<String> {
 }
 
 fn show_overlay<R: Runtime>(app: &AppHandle<R>) {
+    // Reposition before showing so the pill follows the user across
+    // displays. Without this it sticks to whichever monitor it was placed
+    // on at startup (usually the primary), out of sight when the user is
+    // working on a secondary screen.
+    crate::position_overlay_top_center(app);
     if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
         let _ = w.show();
     }

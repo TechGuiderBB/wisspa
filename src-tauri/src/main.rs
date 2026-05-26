@@ -25,17 +25,44 @@ mod tray;
 use std::path::PathBuf;
 use tauri::{Listener, LogicalPosition};
 
-fn position_overlay_top_center<R: tauri::Runtime, M: tauri::Manager<R>>(app: &M) {
+/// Choose which monitor the pill should appear on right now: the one
+/// containing the mouse cursor, falling back to the primary, falling back
+/// to whatever the window currently reports. This gets called both at
+/// startup (so the pill at least lands somewhere visible) and on every
+/// hotkey press (so it follows the user across displays — the pill needs
+/// to be where the user is looking, not pinned to the laptop screen).
+fn pick_pill_monitor<R: tauri::Runtime>(
+    overlay: &tauri::WebviewWindow<R>,
+) -> Option<tauri::Monitor> {
+    if let Ok(Some(cursor)) = overlay.cursor_position().map(Some) {
+        if let Ok(monitors) = overlay.available_monitors() {
+            // Monitor positions/sizes are reported in physical (device)
+            // pixels; `cursor_position` returns the same coordinate space.
+            let cx = cursor.x as i32;
+            let cy = cursor.y as i32;
+            if let Some(m) = monitors.into_iter().find(|m| {
+                let p = m.position();
+                let s = m.size();
+                cx >= p.x
+                    && cx < p.x + s.width as i32
+                    && cy >= p.y
+                    && cy < p.y + s.height as i32
+            }) {
+                return Some(m);
+            }
+        }
+    }
+    overlay
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| overlay.current_monitor().ok().flatten())
+}
+
+pub(crate) fn position_overlay_top_center<R: tauri::Runtime, M: tauri::Manager<R>>(app: &M) {
     if let Some(overlay) = app.get_webview_window("overlay") {
         let _ = overlay.set_visible_on_all_workspaces(true);
-        // Prefer the primary monitor so multi-display setups don't pull the
-        // pill onto a side screen.
-        let mon = overlay
-            .primary_monitor()
-            .ok()
-            .flatten()
-            .or_else(|| overlay.current_monitor().ok().flatten());
-        if let Some(monitor) = mon {
+        if let Some(monitor) = pick_pill_monitor(&overlay) {
             let scale = monitor.scale_factor();
             let logical_width = monitor.size().width as f64 / scale;
             let mp = monitor.position();
