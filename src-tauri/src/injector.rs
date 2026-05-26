@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_clipboard_manager::ClipboardExt;
@@ -71,17 +72,23 @@ pub async fn inject_text<R: Runtime>(
 
     if let Some(name) = target_app {
         log::info!("inject step 2b: re-activating target app '{name}'");
-        if let Err(e) = crate::app_detector::activate_app(name).await {
-            log::warn!("activate_app({name}) failed (continuing anyway): {e:#}");
-        }
-        // Give the OS a moment to bring the app forward and shift keyboard
-        // focus into its focused field. Without this Cmd+V can land before
-        // the activation completes.
-        tokio::time::sleep(Duration::from_millis(120)).await;
+        // Hard error: a silent activate failure here is the difference between
+        // pasting into Chrome and pasting into whatever else macOS thinks is
+        // frontmost. Caller writes the failure into history so the user sees
+        // status=failed instead of a successful-looking ghost paste.
+        crate::app_detector::activate_app(name)
+            .await
+            .with_context(|| format!("could not re-activate target app '{name}'"))?;
+        // Give the OS time to bring the app forward and shift keyboard focus
+        // into its focused field. 200ms covers browsers on macOS 26 where the
+        // window-activation animation is meaningfully slower than older
+        // releases; under this bar, Cmd+V occasionally lands a tick before
+        // the target's first responder is ready.
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
 
-    log::info!("inject step 3: dispatching Cmd+V via AppleScript");
-    send_cmd_v_applescript().await.context("Cmd+V dispatch failed")?;
+    log::info!("inject step 3: dispatching Cmd+V via CGEvent");
+    send_cmd_v_native().context("Cmd+V dispatch failed")?;
 
     log::info!("inject step 4: Cmd+V dispatched, sleeping before restore");
     // Give the target app time to consume the paste.
@@ -102,21 +109,27 @@ pub async fn inject_text<R: Runtime>(
     Ok(())
 }
 
-async fn send_cmd_v_applescript() -> Result<()> {
-    let output = tokio::process::Command::new("osascript")
-        .args([
-            "-e",
-            r#"tell application "System Events" to keystroke "v" using command down"#,
-        ])
-        .output()
-        .await
-        .context("spawn osascript")?;
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "osascript exit {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
+/// Synthesise Cmd+V via CGEvent (Accessibility-permission only, no Apple
+/// Events). Replaces a previous `tell application "System Events" to
+/// keystroke "v" using command down` path which spawned an osascript
+/// subprocess per paste and routed the keystroke through System Events'
+/// Apple Event chain — adding latency, requiring Wisspa to hold the System
+/// Events Automation permission for the keystroke itself, and depending on
+/// what System Events considered frontmost at delivery time rather than
+/// what the OS event queue did.
+fn send_cmd_v_native() -> Result<()> {
+    let mut enigo = Enigo::new(&Settings::default())
+        .context("construct Enigo for Cmd+V")?;
+    // Hold Cmd, click V, release Cmd. `Click` is press+release, so this is
+    // exactly one V keypress with the modifier flag held — same shape macOS
+    // would see from a real human pressing the chord.
+    enigo
+        .key(Key::Meta, Direction::Press)
+        .context("press Cmd")?;
+    let v_result = enigo.key(Key::Unicode('v'), Direction::Click);
+    // Always release Cmd before propagating an error — leaving it stuck
+    // would corrupt the user's subsequent typing.
+    let _ = enigo.key(Key::Meta, Direction::Release);
+    v_result.context("click V")?;
     Ok(())
 }
