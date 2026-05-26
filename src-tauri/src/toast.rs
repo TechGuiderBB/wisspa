@@ -24,8 +24,11 @@ fn is_quiet<R: Runtime>(app: &AppHandle<R>) -> bool {
 }
 
 pub fn info<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
+    // Quiet mode means quiet — no debug log either. A log line per
+    // suppressed toast records the user's activity at debug level, which
+    // some users will have on, and the volume would defeat the toggle's
+    // purpose for anyone debugging an unrelated subsystem.
     if is_quiet(app) {
-        log::debug!("toast suppressed (quiet_notifications): info {title}");
         return;
     }
     show(app, title, body);
@@ -33,7 +36,6 @@ pub fn info<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
 
 pub fn warn<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
     if is_quiet(app) {
-        log::debug!("toast suppressed (quiet_notifications): warn {title}");
         return;
     }
     show(app, &format!("⚠ {title}"), body);
