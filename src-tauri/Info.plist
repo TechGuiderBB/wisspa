@@ -8,5 +8,14 @@
     <string>Wisspa uses Apple Events to detect the focused app and run AppleScript actions.</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>Wisspa uses screen capture for screenshot actions.</string>
+    <!-- Background-only utility app: hides Dock icon and prevents macOS from
+         auto-hiding the app when its last focusable window closes. The main
+         pill window has focus=false, so without this flag macOS treats the
+         app as "no foreground window" the moment Settings closes and hides
+         everything — including the main pill, which kills the WKWebView
+         that hosts MediaRecorder. Matches the standard menu-bar-utility
+         pattern (Magnet, Rectangle, 1Password mini, Hammerspoon). -->
+    <key>LSUIElement</key>
+    <true/>
 </dict>
 </plist>
