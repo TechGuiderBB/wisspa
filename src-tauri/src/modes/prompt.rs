@@ -27,6 +27,11 @@ pub async fn run<R: Runtime>(
     // they pressed the hotkey, even if another app (Perplexity) stole focus
     // by sharing the same global shortcut.
     let snapshot = app_detector::take_target_app();
+    // Browser tab snapshot (only Some when frontmost was a known browser at
+    // press time). Drained alongside the app snapshot so a stale value
+    // doesn't leak into a subsequent recording. Suppressed when the user has
+    // set a manual app override — they've told us the target explicitly.
+    let browser_context = app_detector::take_target_browser_context();
     let (active_app, manual_override_used) = match pm.manual_app_override.as_deref() {
         Some(name) if !name.is_empty() => (name.to_string(), true),
         _ => match snapshot {
@@ -39,6 +44,11 @@ pub async fn run<R: Runtime>(
                 }
             },
         },
+    };
+    let browser_context = if manual_override_used {
+        None
+    } else {
+        browser_context
     };
     let inject_target = if manual_override_used {
         // Manual override is used as a Sonnet format hint, not necessarily an
@@ -72,6 +82,7 @@ pub async fn run<R: Runtime>(
         anthropic_api_key,
         raw_transcript,
         &active_app,
+        browser_context.as_ref(),
         &selected_text,
     )
     .await?;
