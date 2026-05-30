@@ -119,6 +119,13 @@ pub struct General {
     /// recording starts instantly. Off by default.
     #[serde(default = "default_fast_recording_start")]
     pub fast_recording_start: bool,
+    /// When true, suppress info and warn toasts (the "Inserted (raw)" /
+    /// "Inserted (long)" banners on dictation, the auto-learn-correction
+    /// confirmation, action result messages). Error toasts always fire —
+    /// the user still needs to know when something genuinely failed.
+    /// Off by default so existing installs keep their current UX.
+    #[serde(default)]
+    pub quiet_notifications: bool,
 }
 
 fn default_mic_sensitivity() -> String {
@@ -228,6 +235,7 @@ impl Default for Settings {
                 max_recording_seconds: default_max_recording_seconds(),
                 ready_chime: default_ready_chime(),
                 fast_recording_start: default_fast_recording_start(),
+                quiet_notifications: false,
             },
             hotkeys: Hotkeys {
                 // Phase 1/2 ships with safe combos; PRD §4.2 defaults to `fn` etc.

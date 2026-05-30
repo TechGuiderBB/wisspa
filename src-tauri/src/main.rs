@@ -34,7 +34,7 @@ use tauri::{Listener, LogicalPosition};
 fn pick_pill_monitor<R: tauri::Runtime>(
     overlay: &tauri::WebviewWindow<R>,
 ) -> Option<tauri::Monitor> {
-    if let Ok(Some(cursor)) = overlay.cursor_position().map(Some) {
+    if let Ok(cursor) = overlay.cursor_position() {
         if let Ok(monitors) = overlay.available_monitors() {
             // Monitor positions/sizes are reported in physical (device)
             // pixels; `cursor_position` returns the same coordinate space.
