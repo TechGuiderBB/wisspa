@@ -41,3 +41,14 @@ macOS WKWebView throttles JS in fully hidden or off-screen windows, which broke 
 
 ### 12. Recording UI = single-pill stack (overlay-on-top-of-runtime)
 Two windows at the same top-center position: runtime (always visible, idle pill) underneath, overlay (toggled on hotkey, recording pill) on top. Eliminates the bottom-right "spare" pill earlier prototypes had. Simpler UX, single visual focal point.
+
+### 13. Default actions bundled via resource map, not a glob (issue #34)
+`seed_defaults_if_empty` (`actions/registry.rs`) copies the 14 shipped YAML files into the user's actions dir on first launch. It looks in two places: `CARGO_MANIFEST_DIR/../default-actions` (dev) and `resource_dir()/default-actions` (packaged). The bundle config had no `resources` entry, so packaged `.dmg` installs shipped **zero** default actions — verified by building `v0.1.0` and inspecting `Wisspa.app/Contents/Resources/`, which held only `icon.icns`.
+
+Fix: `bundle.resources` in `tauri.conf.json` set to the **map form**
+```json
+"resources": { "../default-actions": "default-actions" }
+```
+not the array/glob form (`["../default-actions/**"]`). Reason: Tauri places `../`-prefixed resources under a `_up_/` folder to preserve the relative path, which would land the files at `Resources/_up_/default-actions/` and miss the `resource_dir().join("default-actions")` lookup. The map form pins the destination to `Resources/default-actions/` directly. Verified post-fix against both the built `.app` and the mounted `.dmg`: 14 YAMLs present at the expected path, no `_up_` folder.
+
+The copy loop was extracted into a unit-testable `copy_yaml_files(src, dest)` helper that now also honours the long-documented "only copy files that don't yet exist" contract (previously relied on the empty-dir gate alone). A release smoke check was added to `LAUNCH.md` so this can't silently regress.
