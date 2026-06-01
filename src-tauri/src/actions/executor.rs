@@ -375,7 +375,7 @@ async fn dispatch(
         "executing action '{}' ({:?}) → {}",
         action.id,
         action.action_type,
-        resolved
+        crate::redact::redact(resolved)
     );
     let result = match action.action_type {
         ActionType::Shell => run_shell(resolved, action.working_dir.as_deref(), env).await,

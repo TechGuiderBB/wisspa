@@ -25,8 +25,11 @@ dotenvy = "0.15"
 anyhow = "1"
 thiserror = "1"
 base64 = "0.22"
-log = "0.4"
-env_logger = "0.11"
+log = { version = "0.4", features = ["std"] }
+sha2 = "0.10"
+# `stored` only (no deflate) so we don't pull new compression backends into the
+# cargo-audit surface; diagnostics logs are small and redacted (issue #33).
+zip = { version = "4", default-features = false }
 keyring = { version = "3", features = ["apple-native"] }
 serde_yaml = "0.9"
 strsim = "0.11"

@@ -12,9 +12,11 @@ mod injector;
 mod keychain;
 mod learning;
 mod llm;
+mod logging;
 mod modes;
 mod permissions;
 mod prearm;
+mod redact;
 mod selection;
 mod settings_store;
 mod sounds;
@@ -171,7 +173,7 @@ fn load_env() {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    logging::init();
     load_env();
 
     let state = AppState {
@@ -229,6 +231,7 @@ fn main() {
             // Opt-in pre-warm: watch for the modifier portion of a recording
             // hotkey so the mic can be warmed before the full combo completes.
             if let Ok(s) = settings_store::load(&app.handle()) {
+                redact::set_verbose(s.general.verbose_logging);
                 let masks = prearm::collect_masks(&[
                     &s.hotkeys.dictation,
                     &s.hotkeys.action,
@@ -236,6 +239,7 @@ fn main() {
                 ]);
                 prearm::apply(app.handle(), s.general.fast_recording_start, masks);
             }
+            log::info!("log file: {}", logging::log_path().display());
             maybe_show_onboarding(&app.handle());
             Ok(())
         })
@@ -265,6 +269,7 @@ fn main() {
             commands::get_word_corrections,
             commands::submit_word_correction,
             commands::save_word_corrections,
+            commands::export_diagnostics,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

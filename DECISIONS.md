@@ -41,3 +41,12 @@ macOS WKWebView throttles JS in fully hidden or off-screen windows, which broke 
 
 ### 12. Recording UI = single-pill stack (overlay-on-top-of-runtime)
 Two windows at the same top-center position: runtime (always visible, idle pill) underneath, overlay (toggled on hotkey, recording pill) on top. Eliminates the bottom-right "spare" pill earlier prototypes had. Simpler UX, single visual focal point.
+
+### 13. File logging + redaction policy (issue #33)
+`env_logger` wrote to stderr, which macOS Launch Services redirects to `/dev/null` for a double-clicked/autostarted app — so a shipped build produced **no** diagnostic artifact. Replaced with a small synchronous `log::Log` backend (`logging.rs`) writing to `~/Library/Logs/Wisspa/wisspa.log`, rotating at 5 MB and keeping 3 files.
+
+**Why hand-rolled, not `tracing-appender`/`fern`:** `tracing-appender` only rotates on time, not size, so it can't meet "5 MB, keep 3". A synchronous backend also has no background flush-guard to keep alive (an async-appender footgun), and — being a plain `log` backend — every existing `log::info!`/`warn!`/`error!` call keeps working with no migration. It also mirrors to stderr so `tauri dev` still shows logs.
+
+**Redaction policy:** transcripts, LLM output, and clipboard/selection values are never written verbatim at info/warn. `redact::redact()` returns `<redacted chars=N sha256=xxxxxxxx>` — a length plus a short SHA-256 prefix, enough to correlate the same content across lines without exposing it. Applied at every such log site (`commands.rs` transcript + hallucination, `dictation.rs` divergence, `executor.rs` resolved command). A **Verbose logging** toggle (Settings → General, default OFF, mirrored in `settings_store.rs` + `settings.ts`) flips `redact()` to log content verbatim when the user is capturing a bug; it is read at startup and on each `process_audio` call so it takes effect without a restart.
+
+**Export Diagnostics** (About tab → `export_diagnostics` command) bundles the already-redacted log files plus app version, accessibility state and hotkey config into a `.zip`. It deliberately excludes `history.db` (transcripts) and the raw `settings.json` (vocabulary, paths, future licence state). `zip` uses the `stored` method only — no compression backend — so no new crates (`zopfli`/`zlib-rs`) enter the cargo-audit surface; `sha2` and `zip` were already in the tree transitively. `env_logger` was removed.

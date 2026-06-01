@@ -269,6 +269,8 @@ pub async fn process_audio<R: Runtime>(
     // `settings` is owned and lives for the whole function, so its fields can
     // be borrowed directly (including across the await) — no clones needed.
     let settings = settings_store::load(&app).unwrap_or_default();
+    // Honour the verbose-logging toggle without requiring an app restart.
+    crate::redact::set_verbose(settings.general.verbose_logging);
     let vocab_hint: Option<String> = if settings.vocabulary.is_empty() {
         None
     } else {
@@ -297,7 +299,7 @@ pub async fn process_audio<R: Runtime>(
         }
     };
 
-    log::info!("transcript ({mode}): {transcript:?}");
+    log::info!("transcript ({mode}): {}", crate::redact::redact(&transcript));
 
     if transcript.is_empty() {
         log::warn!("empty transcript; no speech detected");
@@ -317,7 +319,10 @@ pub async fn process_audio<R: Runtime>(
     // Suppress these before they reach the cleanup LLM (which itself can
     // hallucinate a chatbot response on top of the garbage).
     if looks_like_whisper_hallucination(&transcript) {
-        log::warn!("suppressing likely Whisper hallucination: {transcript:?}");
+        log::warn!(
+            "suppressing likely Whisper hallucination: {}",
+            crate::redact::redact(&transcript)
+        );
         emit_status(&app, "no-speech", "No speech detected");
         let _ = history::insert(history::NewEntry {
             mode: mode.clone(),
@@ -562,4 +567,75 @@ pub fn save_word_corrections<R: Runtime>(
     let mut settings = settings_store::load(&app).map_err(|e| format!("{e:#}"))?;
     settings.word_corrections = corrections;
     settings_store::save(&app, &settings).map_err(|e| format!("{e:#}"))
+}
+
+// ── Diagnostics export ───────────────────────────────────────────────────────
+
+/// Bundle the (already-redacted) log files plus app/version/permission/hotkey
+/// context into a `.zip` the user can attach to a bug report. Returns the path.
+///
+/// Deliberately excludes `history.db` (holds transcripts) and the raw
+/// `settings.json` (holds vocabulary, paths, future licence state) — only the
+/// hotkey config and a couple of booleans are surfaced. The log files are safe
+/// to include because content is redacted at write time (issue #33).
+#[tauri::command]
+pub fn export_diagnostics<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
+    use std::io::Write;
+
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let out_dir = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().home_dir())
+        .map_err(|e| format!("no output directory: {e}"))?;
+    let zip_path = out_dir.join(format!("wisspa-diagnostics-{ts}.zip"));
+
+    let file = std::fs::File::create(&zip_path).map_err(|e| format!("create zip: {e}"))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+    let summary = diagnostics_summary(&app);
+    zip.start_file("diagnostics.txt", opts)
+        .map_err(|e| format!("zip entry: {e}"))?;
+    zip.write_all(summary.as_bytes())
+        .map_err(|e| format!("zip write: {e}"))?;
+
+    let log_dir = crate::logging::log_dir();
+    for name in ["wisspa.log", "wisspa.1.log", "wisspa.2.log", "wisspa.3.log"] {
+        if let Ok(bytes) = std::fs::read(log_dir.join(name)) {
+            if zip.start_file(name, opts).is_ok() {
+                let _ = zip.write_all(&bytes);
+            }
+        }
+    }
+
+    zip.finish().map_err(|e| format!("finalise zip: {e}"))?;
+    Ok(zip_path.display().to_string())
+}
+
+fn diagnostics_summary<R: Runtime>(app: &AppHandle<R>) -> String {
+    let settings = settings_store::load(app).unwrap_or_default();
+    let ax = crate::injector::accessibility_trusted();
+    format!(
+        "Wisspa diagnostics\n\
+         version: {}\n\
+         log file: {}\n\
+         accessibility_trusted: {ax}\n\
+         verbose_logging: {}\n\
+         hotkeys: dictation={} action={} prompt={} cancel={}\n\
+         \nNote: transcripts, LLM output and clipboard/selection values are\n\
+         redacted in the logs unless verbose logging was enabled.\n",
+        env!("CARGO_PKG_VERSION"),
+        crate::logging::log_path().display(),
+        settings.general.verbose_logging,
+        settings.hotkeys.dictation,
+        settings.hotkeys.action,
+        settings.hotkeys.prompt,
+        settings.hotkeys.cancel,
+    )
 }
