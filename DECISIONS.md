@@ -50,3 +50,16 @@ Every hotkey press mints a monotonic **session id** (`session.rs`) that is threa
 **Cancellation aborts the work, not just the result.** A `tokio::sync::watch` channel broadcasts watermark changes; STT and the LLM call run inside `tokio::select!` against an `aborted(session)` future, so Esc (or a newer recording) drops the request future and cancels the in-flight reqwest call rather than letting it finish and discarding the output. Injection is deliberately **not** raced — it has side effects (clipboard). Instead it takes a global `tokio::sync::Mutex` (single-flight, so two completions can't interleave the clipboard read/write/restore) and re-checks `is_aborted` after acquiring the lock, returning the `CANCELLED_MARKER` without pasting if the session is stale.
 
 The mode+session pair is delivered to the frontend in a single `wisspa://start-recording` payload (previously mode and start were two separate events — a race), and the frontend echoes the session id back through `process_audio`. A `session` of 0 means an older frontend with no session plumbing and is treated as never-cancelled (legacy passthrough).
+
+### 14. Lossless clipboard snapshot/restore via NSPasteboard (issue #32)
+Dictation injects by writing to the clipboard, pasting `Cmd+V`, then restoring the previous clipboard. The old restore path used `tauri-plugin-clipboard-manager`'s `read_text()`, which returns `Err` for any non-text clipboard (image, file reference, RTF). That `Err` was treated as "nothing to restore", so dictating while a screenshot or copied file was on the clipboard **silently destroyed it**.
+
+Chose **option 1/3 from the issue: snapshot every pasteboard flavor and restore them all** (`clipboard.rs`), via direct `NSPasteboard` access (`objc2-app-kit`). Rejected option 2 (detect non-text and skip the paste) because it kills the dictation the user asked for.
+
+Key constraints:
+- **Owned Rust data, not Cocoa objects, across `.await`.** The snapshot converts each flavor to `(String, Vec<u8>)` immediately. `inject_text` is an async fn on a multi-threaded runtime, so its future must be `Send`; holding `Retained<NSData>` across the activate/paste/sleep awaits would break that and risk autorelease lifetime bugs.
+- **All ObjC work inside `autoreleasepool`.** objc2 0.6 exposes the `NSPasteboard` methods we use as safe (no `MainThreadMarker`, no raw pointers), so no `unsafe` blocks are needed.
+- **Promised/lazy flavors fail open.** A provider that vends data on demand returns no bytes for `dataForType:`; we can't reproduce the promise, so those flavors are skipped and the count is logged (never silently claimed as "all flavors restored").
+- **Empty clipboard:** leave the injected text in place (unchanged prior behaviour) rather than clearing.
+
+This swaps the implementation *inside* the single-flight inject mutex from #13, so the snapshot→write→paste→restore window is already serialized — two pastes can't interleave and corrupt the clipboard. Verified with a round-trip unit test against a private `pasteboardWithUniqueName` (text + binary bytes incl. 0x00/0xFF), so the test never touches the real system clipboard. `objc2`, `objc2-app-kit`, `objc2-foundation` were already in the tree transitively via Tauri; this only promotes them to direct dependencies.
