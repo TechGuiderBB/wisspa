@@ -584,7 +584,7 @@ pub fn export_diagnostics<R: Runtime>(app: AppHandle<R>) -> Result<String, Strin
 
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
+        .map(|d| d.as_millis())
         .unwrap_or(0);
 
     let out_dir = app

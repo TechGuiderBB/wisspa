@@ -208,7 +208,7 @@ export default function AboutTab() {
         <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3 flex items-center gap-3">
           <div className="flex-1 text-xs text-neutral-700">
             Export a <code className="font-mono">.zip</code> of redacted logs, app
-            version, permission state and hotkeys for a bug report. Transcripts and
+            version, accessibility status and hotkeys for a bug report. Transcripts and
             clipboard text are not included unless Verbose logging is on.
             {diag.kind === "done" && (
               <div className="mt-1 text-emerald-700 break-all">Saved to {diag.path}</div>

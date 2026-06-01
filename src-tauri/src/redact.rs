@@ -8,7 +8,8 @@
 //! correlation without exposing what the user said or copied.
 //!
 //! A user can opt in to verbose logging (Settings) to capture a hard bug; then
-//! `redact()` returns the content verbatim. Off by default.
+//! `redact()` returns the content debug-escaped (quoted and escaped via `{:?}`),
+//! which keeps log lines single-line and avoids raw control characters. Off by default.
 
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,7 +28,8 @@ pub fn verbose() -> bool {
 
 /// Redact sensitive text for logging. With verbose off (default) returns a
 /// non-reversible `<redacted chars=N sha256=xxxxxxxx>` summary; with verbose on
-/// returns the text quoted verbatim.
+/// returns the text debug-escaped via `{:?}` (quoted, newlines/backslashes escaped,
+/// one-line safe).
 pub fn redact(s: &str) -> String {
     redact_with(s, verbose())
 }
