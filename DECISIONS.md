@@ -41,3 +41,12 @@ macOS WKWebView throttles JS in fully hidden or off-screen windows, which broke 
 
 ### 12. Recording UI = single-pill stack (overlay-on-top-of-runtime)
 Two windows at the same top-center position: runtime (always visible, idle pill) underneath, overlay (toggled on hotkey, recording pill) on top. Eliminates the bottom-right "spare" pill earlier prototypes had. Simpler UX, single visual focal point.
+
+### 13. Recording sessions + cancellation model (issue #31)
+Every hotkey press mints a monotonic **session id** (`session.rs`) that is threaded press → `process_audio` → mode runners → `inject_text`. Replaces the old single `CANCEL_EPOCH` counter, which only the prompt-preview wait consumed — STT, the LLM call, and injection kept running after Esc and pasted into whatever field was focused by then, and overlapping recordings could race the clipboard.
+
+**Overlap policy: latest-wins (drop-prior).** Starting a new recording supersedes any older in-flight one, so only the newest recording ever injects. This matches the dictation tool's intent (the thing you just said is the thing you want) and avoids a queue that would paste stale text seconds later. Both cancel and supersede are expressed by one `cancelled_through` watermark: a session is aborted iff `session <= cancelled_through`. `begin()` raises the watermark to the prior session; `cancel_active()` (Esc) raises it to the current session.
+
+**Cancellation aborts the work, not just the result.** A `tokio::sync::watch` channel broadcasts watermark changes; STT and the LLM call run inside `tokio::select!` against an `aborted(session)` future, so Esc (or a newer recording) drops the request future and cancels the in-flight reqwest call rather than letting it finish and discarding the output. Injection is deliberately **not** raced — it has side effects (clipboard). Instead it takes a global `tokio::sync::Mutex` (single-flight, so two completions can't interleave the clipboard read/write/restore) and re-checks `is_aborted` after acquiring the lock, returning the `CANCELLED_MARKER` without pasting if the session is stale.
+
+The mode+session pair is delivered to the frontend in a single `wisspa://start-recording` payload (previously mode and start were two separate events — a race), and the frontend echoes the session id back through `process_audio`. A `session` of 0 means an older frontend with no session plumbing and is treated as never-cancelled (legacy passthrough).

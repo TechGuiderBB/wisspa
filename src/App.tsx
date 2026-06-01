@@ -68,6 +68,10 @@ function Runtime() {
   // Monotonic id for processAudio pipelines. A newer STOP bumps it; a stale
   // completion checks it before applying transcript / clearing isProcessing.
   const processIdRef = useRef(0);
+  // Backend session id for the in-flight recording, minted by Rust on hotkey
+  // press and delivered in the START payload. Passed to process_audio so the
+  // backend can cancel/supersede the pipeline (issue #31). 0 = no recording.
+  const sessionRef = useRef(0);
   // Mode the in-flight recording is for. Set from `wisspa://recording-mode`
   // emitted by Rust at hotkey-press time; read at hotkey-release time.
   const modeRef = (Runtime as unknown as { _modeRef?: { current: RecordingMode } })
@@ -127,7 +131,18 @@ function Runtime() {
       }
     }).then(track);
 
-    listen(START_EVENT, async () => {
+    listen<{ mode: RecordingMode; session: number }>(START_EVENT, async (e) => {
+      // Mode + session arrive together in one event so this recording is bound
+      // to the right mode and a unique backend session (issue #31).
+      const payload = e.payload;
+      if (
+        payload?.mode === "dictation" ||
+        payload?.mode === "action" ||
+        payload?.mode === "prompt"
+      ) {
+        modeRef.current = payload.mode;
+      }
+      sessionRef.current = payload?.session ?? 0;
       try {
         setError(null);
         await startRecording();
@@ -165,9 +180,11 @@ function Runtime() {
         clearTimeout(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
-      // Capture the mode up front: a MODE_EVENT arriving mid-pipeline must not
-      // change which mode this blob is reported, displayed, and processed as.
+      // Capture the mode + session up front: a later press arriving
+      // mid-pipeline must not change which mode/session this blob is processed
+      // as.
       const mode = modeRef.current;
+      const session = sessionRef.current;
       try {
         const result = await stopRecording();
         setRecording(false);
@@ -208,6 +225,7 @@ function Runtime() {
             b64,
             blob.type || "audio/webm",
             mode,
+            session,
           );
           if (processId === processIdRef.current) {
             setTranscript(transcript);

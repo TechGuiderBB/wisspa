@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
@@ -13,25 +12,20 @@ pub const EVENT_MODE: &str = "wisspa://recording-mode";
 
 const OVERLAY_LABEL: &str = "overlay";
 
-// Esc cancellation is broadcast via a monotonically increasing epoch rather
-// than a boolean. Each in-flight prompt preview captures the epoch when it
-// starts waiting; any Esc press bumps the epoch, so all in-flight pipelines
-// see a mismatch and cancel — and the next pipeline starts fresh without
-// any explicit "clear" step. Works correctly when the frontend allows
-// overlapping process_audio calls.
-static CANCEL_EPOCH: AtomicU64 = AtomicU64::new(0);
-
 /// Marker string surfaced through `Err` to signal a user-initiated cancel,
-/// distinct from a real failure. Recognised in `run_prompt_mode` (skip the
+/// distinct from a real failure. Recognised in the mode runners (skip the
 /// error toast) and in `process_audio` (history status `cancelled`, no
 /// frontend error).
 pub const CANCELLED_MARKER: &str = "__user_cancelled__";
 
-pub fn bump_cancel_epoch() {
-    CANCEL_EPOCH.fetch_add(1, Ordering::SeqCst);
-}
-pub fn current_cancel_epoch() -> u64 {
-    CANCEL_EPOCH.load(Ordering::SeqCst)
+/// Payload for `EVENT_START`. Mode and session id travel together in a single
+/// event so the frontend can never bind a recording to the wrong mode or a
+/// stale session (the old design emitted mode and start as two separate
+/// events — issue #31).
+#[derive(serde::Serialize, Clone)]
+struct StartPayload {
+    mode: &'static str,
+    session: u64,
 }
 
 /// Action → currently registered shortcut. Used so the runtime handler can
@@ -96,8 +90,9 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     log::info!("dictation hotkey pressed");
                     crate::app_detector::snapshot_target_app_now();
                     show_overlay(app);
+                    let session = crate::session::begin();
                     let _ = app.emit(EVENT_MODE, "dictation");
-                    let _ = app.emit(EVENT_START, ());
+                    let _ = app.emit(EVENT_START, StartPayload { mode: "dictation", session });
                 }
                 ("dictation", ShortcutState::Released) => {
                     log::info!("dictation hotkey released");
@@ -109,8 +104,9 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     log::info!("action hotkey pressed");
                     crate::app_detector::snapshot_target_app_now();
                     show_overlay(app);
+                    let session = crate::session::begin();
                     let _ = app.emit(EVENT_MODE, "action");
-                    let _ = app.emit(EVENT_START, ());
+                    let _ = app.emit(EVENT_START, StartPayload { mode: "action", session });
                 }
                 ("action", ShortcutState::Released) => {
                     log::info!("action hotkey released");
@@ -122,8 +118,9 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     log::info!("prompt hotkey pressed");
                     crate::app_detector::snapshot_target_app_now();
                     show_overlay(app);
+                    let session = crate::session::begin();
                     let _ = app.emit(EVENT_MODE, "prompt");
-                    let _ = app.emit(EVENT_START, ());
+                    let _ = app.emit(EVENT_START, StartPayload { mode: "prompt", session });
                 }
                 ("prompt", ShortcutState::Released) => {
                     log::info!("prompt hotkey released");
@@ -136,7 +133,9 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     crate::app_detector::clear_target_app();
                     crate::sounds::play(app, crate::sounds::Cue::Cancel);
                     hide_overlay(app);
-                    bump_cancel_epoch();
+                    // Aborts the in-flight pipeline backend-side: cancels any
+                    // running STT/LLM request and blocks injection (issue #31).
+                    crate::session::cancel_active();
                     let _ = app.emit(EVENT_CANCEL, ());
                 }
                 _ => {}
