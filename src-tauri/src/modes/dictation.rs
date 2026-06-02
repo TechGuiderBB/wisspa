@@ -32,6 +32,7 @@ pub async fn run<R: Runtime>(
     app: &AppHandle<R>,
     anthropic_api_key: &str,
     raw_transcript: &str,
+    session: u64,
 ) -> Result<DictationOutcome> {
     let long_transcript = raw_transcript.chars().count() > 2000;
 
@@ -62,8 +63,18 @@ pub async fn run<R: Runtime>(
         _ => raw_transcript.to_string(),
     };
 
+    // Race the cleanup call against cancellation: an Esc (or a newer
+    // recording) drops the request future, cancelling the in-flight HTTP call
+    // rather than waiting for it to finish (issue #31).
+    let cleanup = tokio::select! {
+        biased;
+        _ = crate::session::aborted(session) => {
+            return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
+        }
+        r = llm::haiku_cleanup_dictation(anthropic_api_key, &corrected_transcript, &active_app) => r,
+    };
     let (final_text, cleaned, haiku_diverged) =
-        match llm::haiku_cleanup_dictation(anthropic_api_key, &corrected_transcript, &active_app).await {
+        match cleanup {
             Ok(haiku_out) => {
                 // Compare against the text Haiku actually saw (the corrected
                 // transcript). Using the raw transcript here would flag the
@@ -83,7 +94,7 @@ pub async fn run<R: Runtime>(
             }
         };
 
-    injector::inject_text(app, &final_text, Some(&active_app)).await?;
+    injector::inject_text(app, &final_text, Some(&active_app), session).await?;
 
     // Spawn auto-learn snapshot task if the user has opted in.
     if let Some(wc) = &word_corrections {

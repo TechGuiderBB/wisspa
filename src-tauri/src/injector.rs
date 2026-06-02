@@ -1,7 +1,14 @@
 use anyhow::{Context, Result};
+use once_cell::sync::Lazy;
 use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+
+/// Serialises the whole clipboard read → write → paste → restore window so two
+/// pipelines completing close together can't interleave and corrupt the
+/// clipboard or paste each other's text (issue #31). A `tokio::sync::Mutex` is
+/// required (not `std::sync::Mutex`) because the guard is held across `.await`.
+static INJECT_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
 #[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -31,9 +38,22 @@ pub async fn inject_text<R: Runtime>(
     app: &AppHandle<R>,
     text: &str,
     target_app: Option<&str>,
+    session: u64,
 ) -> Result<()> {
     if text.is_empty() {
         return Ok(());
+    }
+
+    // Single-flight: only one injection touches the clipboard at a time. If a
+    // newer recording is already pasting, this one waits its turn here.
+    let _guard = INJECT_LOCK.lock().await;
+
+    // Re-check after acquiring the lock: the user may have pressed Esc, or a
+    // newer recording may have superseded this one, while we were queued. Never
+    // paste stale text into whatever field is now focused (issue #31).
+    if crate::session::is_aborted(session) {
+        log::info!("inject aborted before paste: session {session} cancelled/superseded");
+        return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
     }
 
     if !accessibility_trusted() {

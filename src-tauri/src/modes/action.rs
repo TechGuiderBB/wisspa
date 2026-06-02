@@ -26,7 +26,11 @@ fn needs_query(action_id: &str) -> bool {
 /// Phase 4 pipeline:
 ///   transcript → match against registry → execute matched action.
 ///   No match → return Top-N suggestions for the toast.
-pub async fn run<R: Runtime>(app: &AppHandle<R>, transcript: &str) -> Result<ActionOutcome> {
+pub async fn run<R: Runtime>(
+    app: &AppHandle<R>,
+    transcript: &str,
+    session: u64,
+) -> Result<ActionOutcome> {
     let trimmed = transcript.trim();
     if trimmed.is_empty() {
         return Ok(ActionOutcome {
@@ -52,6 +56,11 @@ pub async fn run<R: Runtime>(app: &AppHandle<R>, transcript: &str) -> Result<Act
                     matched_action_id: Some(m.action.id.clone()),
                     suggestions: Vec::new(),
                 });
+            }
+            // Don't run the action (or stage a destructive-action confirmation)
+            // if the user cancelled or started a newer recording (issue #31).
+            if crate::session::is_aborted(session) {
+                return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
             }
             let exec = executor::execute(app, &m.action, &m.query).await?;
             Ok(ActionOutcome {
