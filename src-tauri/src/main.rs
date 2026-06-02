@@ -5,6 +5,7 @@ mod actions;
 mod app_detector;
 mod audio;
 mod ax_snapshot;
+mod clipboard;
 mod commands;
 mod history;
 mod hotkeys;
