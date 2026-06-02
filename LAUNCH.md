@@ -102,6 +102,19 @@ https://github.com/TechGuiderBB/wisspa-releases/releases/latest/download/latest.
 
 The `.dmg` is signed and notarised by Apple Developer ID (once the cert lands).
 
+**Packaged smoke checks (run on every release `.dmg` before publishing):**
+
+- [ ] Mount the `.dmg` and confirm `Wisspa.app/Contents/Resources/default-actions/` contains all 14 shipped YAML files (regression guard for #34 — packaged builds shipping with no voice commands). One-liner:
+  ```bash
+  hdiutil attach Wisspa_*_aarch64.dmg -nobrowse -readonly -mountpoint /tmp/wisspa-dmg && \
+    find /tmp/wisspa-dmg/Wisspa.app/Contents/Resources/default-actions \
+      -type f \( -name '*.yaml' -o -name '*.yml' \) | wc -l && \
+    hdiutil detach /tmp/wisspa-dmg
+  ```
+  Expect `14`. (Counts both `.yaml` and `.yml`, matching the loader; `find` also
+  fails cleanly if the directory is missing instead of globbing to an error.)
+- [ ] Fresh-user install (or a clean `~/Library/Application Support/com.techguider.wisspa/`): launch, open Settings → Actions, confirm the 14 defaults appear.
+
 ### API proxy
 
 ```
