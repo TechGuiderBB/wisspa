@@ -34,6 +34,9 @@ pub fn save_settings<R: Runtime>(
     settings: settings_store::Settings,
 ) -> Result<(), String> {
     settings_store::save(&app, &settings).map_err(|e| format!("save settings: {e:#}"))?;
+    // Apply the verbose-logging toggle immediately so it takes effect for every
+    // command path (actions, diagnostics export), not just the next dictation.
+    crate::redact::set_verbose(settings.general.verbose_logging);
     // Apply pre-warm changes live so `fast_recording_start` (and any hotkey
     // change) takes effect without an app restart.
     let masks = crate::prearm::collect_masks(&[
@@ -607,11 +610,16 @@ pub fn export_diagnostics<R: Runtime>(app: AppHandle<R>) -> Result<String, Strin
 
     let log_dir = crate::logging::log_dir();
     for name in ["wisspa.log", "wisspa.1.log", "wisspa.2.log", "wisspa.3.log"] {
-        if let Ok(bytes) = std::fs::read(log_dir.join(name)) {
-            if zip.start_file(name, opts).is_ok() {
-                let _ = zip.write_all(&bytes);
-            }
-        }
+        // A rotated file may legitimately not exist yet — skip those. But once a
+        // file is read, surface any zip write failure rather than returning a
+        // silently-incomplete archive.
+        let Ok(bytes) = std::fs::read(log_dir.join(name)) else {
+            continue;
+        };
+        zip.start_file(name, opts)
+            .map_err(|e| format!("zip entry {name}: {e}"))?;
+        zip.write_all(&bytes)
+            .map_err(|e| format!("zip write {name}: {e}"))?;
     }
 
     zip.finish().map_err(|e| format!("finalise zip: {e}"))?;
