@@ -28,6 +28,46 @@ struct StartPayload {
     session: u64,
 }
 
+/// Payload for `EVENT_STOP`. Carries the mode + session of the recording being
+/// released so the frontend binds the captured audio to the session that this
+/// key's press began — even if a different recording hotkey was pressed (and
+/// overwrote the frontend's refs) before this one was released (issue #31).
+#[derive(serde::Serialize, Clone)]
+struct StopPayload {
+    mode: &'static str,
+    session: u64,
+}
+
+/// Mode → session id of the in-flight recording for that mode, so the release
+/// handler can emit the session its own press began rather than whatever the
+/// frontend last saw.
+fn recording_sessions() -> &'static Mutex<HashMap<&'static str, u64>> {
+    static M: OnceLock<Mutex<HashMap<&'static str, u64>>> = OnceLock::new();
+    M.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn on_press<R: Runtime>(app: &AppHandle<R>, mode: &'static str) {
+    crate::app_detector::snapshot_target_app_now();
+    show_overlay(app);
+    let session = crate::session::begin();
+    if let Ok(mut m) = recording_sessions().lock() {
+        m.insert(mode, session);
+    }
+    let _ = app.emit(EVENT_MODE, mode);
+    let _ = app.emit(EVENT_START, StartPayload { mode, session });
+}
+
+fn on_release<R: Runtime>(app: &AppHandle<R>, mode: &'static str) {
+    crate::sounds::play(app, crate::sounds::Cue::Stop);
+    hide_overlay(app);
+    let session = recording_sessions()
+        .lock()
+        .ok()
+        .and_then(|mut m| m.remove(mode))
+        .unwrap_or(0);
+    let _ = app.emit(EVENT_STOP, StopPayload { mode, session });
+}
+
 /// Action → currently registered shortcut. Used so the runtime handler can
 /// dispatch any registered shortcut to the right action even after reassignment.
 fn registry() -> &'static Mutex<HashMap<String, Shortcut>> {
@@ -88,45 +128,27 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
             match (action.as_str(), event.state()) {
                 ("dictation", ShortcutState::Pressed) => {
                     log::info!("dictation hotkey pressed");
-                    crate::app_detector::snapshot_target_app_now();
-                    show_overlay(app);
-                    let session = crate::session::begin();
-                    let _ = app.emit(EVENT_MODE, "dictation");
-                    let _ = app.emit(EVENT_START, StartPayload { mode: "dictation", session });
+                    on_press(app, "dictation");
                 }
                 ("dictation", ShortcutState::Released) => {
                     log::info!("dictation hotkey released");
-                    crate::sounds::play(app, crate::sounds::Cue::Stop);
-                    hide_overlay(app);
-                    let _ = app.emit(EVENT_STOP, ());
+                    on_release(app, "dictation");
                 }
                 ("action", ShortcutState::Pressed) => {
                     log::info!("action hotkey pressed");
-                    crate::app_detector::snapshot_target_app_now();
-                    show_overlay(app);
-                    let session = crate::session::begin();
-                    let _ = app.emit(EVENT_MODE, "action");
-                    let _ = app.emit(EVENT_START, StartPayload { mode: "action", session });
+                    on_press(app, "action");
                 }
                 ("action", ShortcutState::Released) => {
                     log::info!("action hotkey released");
-                    crate::sounds::play(app, crate::sounds::Cue::Stop);
-                    hide_overlay(app);
-                    let _ = app.emit(EVENT_STOP, ());
+                    on_release(app, "action");
                 }
                 ("prompt", ShortcutState::Pressed) => {
                     log::info!("prompt hotkey pressed");
-                    crate::app_detector::snapshot_target_app_now();
-                    show_overlay(app);
-                    let session = crate::session::begin();
-                    let _ = app.emit(EVENT_MODE, "prompt");
-                    let _ = app.emit(EVENT_START, StartPayload { mode: "prompt", session });
+                    on_press(app, "prompt");
                 }
                 ("prompt", ShortcutState::Released) => {
                     log::info!("prompt hotkey released");
-                    crate::sounds::play(app, crate::sounds::Cue::Stop);
-                    hide_overlay(app);
-                    let _ = app.emit(EVENT_STOP, ());
+                    on_release(app, "prompt");
                 }
                 ("cancel", ShortcutState::Pressed) => {
                     log::info!("cancel hotkey pressed");

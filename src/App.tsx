@@ -175,16 +175,21 @@ function Runtime() {
       }
     }).then(track);
 
-    listen(STOP_EVENT, async () => {
+    listen<{ mode: RecordingMode; session: number }>(STOP_EVENT, async (e) => {
       if (recordingTimerRef.current !== null) {
         clearTimeout(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
-      // Capture the mode + session up front: a later press arriving
-      // mid-pipeline must not change which mode/session this blob is processed
-      // as.
-      const mode = modeRef.current;
-      const session = sessionRef.current;
+      // Bind to the mode + session carried by THIS stop event (the one its own
+      // press began), not the refs — a second recording hotkey pressed before
+      // this one was released would have overwritten the refs (issue #31).
+      // Fall back to the refs if an older backend omitted the payload.
+      const payload = e.payload;
+      const mode: RecordingMode =
+        payload?.mode === "dictation" || payload?.mode === "action" || payload?.mode === "prompt"
+          ? payload.mode
+          : modeRef.current;
+      const session = payload?.session ?? sessionRef.current;
       try {
         const result = await stopRecording();
         setRecording(false);
