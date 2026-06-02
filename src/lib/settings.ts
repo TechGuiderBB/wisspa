@@ -40,6 +40,7 @@ export type Settings = {
     ready_chime: boolean;
     fast_recording_start: boolean;
     quiet_notifications: boolean;
+    verbose_logging: boolean;
   };
   hotkeys: {
     dictation: string;
