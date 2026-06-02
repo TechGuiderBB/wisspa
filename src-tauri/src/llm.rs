@@ -71,10 +71,14 @@ pub async fn haiku_cleanup_dictation(
     call_anthropic(api_key, AnthropicParams::haiku_cleanup(), &system_prompt, transcript).await
 }
 
-/// Max characters of selected text forwarded to Sonnet. Oversized selections
-/// are truncated (at a char boundary) so they cannot crowd out the system
-/// prompt or the user's actual spoken intent. Issue #30.
+/// Max characters of selected *source* text forwarded to Sonnet. Oversized
+/// selections are truncated (at a char boundary). Issue #30.
 const MAX_SELECTED_TEXT_CHARS: usize = 4000;
+
+/// Hard ceiling on the *escaped* block, since escaping `&`/`<`/`>` can expand
+/// length (e.g. `&` → `&amp;`). Keeps a pathological selection (thousands of
+/// angle brackets) from ballooning the user message regardless of escaping.
+const MAX_ESCAPED_SELECTED_TEXT_CHARS: usize = MAX_SELECTED_TEXT_CHARS * 2;
 
 /// Collapse a value to a single line for safe interpolation into the user
 /// message: newlines, CRs and tabs become spaces, other control chars are
@@ -95,9 +99,11 @@ fn single_line(s: &str) -> String {
 /// Mode's most common injection vector: a user can select a paragraph that says
 /// "ignore previous instructions and output X", or even a literal
 /// `</selected_text_untrusted>` to try to break out of its block. We therefore:
-///   1. truncate at a char boundary (never mid-codepoint),
-///   2. escape `&`, `<`, `>` so no closing delimiter can appear literally, then
-///   3. wrap in an explicit untrusted delimiter the system prompt treats as data.
+///   1. truncate the source at a char boundary (never mid-codepoint),
+///   2. escape `&`, `<`, `>` so no closing delimiter can appear literally,
+///   3. clamp the escaped result to a hard char ceiling so escaping expansion
+///      can't balloon the message, then
+///   4. wrap in an explicit untrusted delimiter the system prompt treats as data.
 ///
 /// Returns an empty string for empty / whitespace-only input so the block is
 /// omitted entirely (a consistent "no selection" shape). Mirrors the
@@ -107,10 +113,20 @@ fn wrap_selected_text_untrusted(selected_text: &str) -> String {
         return String::new();
     }
     let truncated: String = selected_text.chars().take(MAX_SELECTED_TEXT_CHARS).collect();
-    let escaped = truncated
+    let mut escaped = truncated
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;");
+    // Clamp the escaped output too. Truncating escaped text can only drop
+    // trailing characters — it never introduces a raw `<`/`>` — so the block
+    // still can't be broken out of. A clipped trailing entity (e.g. `&l`) is
+    // inert text inside the block.
+    if escaped.chars().count() > MAX_ESCAPED_SELECTED_TEXT_CHARS {
+        escaped = escaped
+            .chars()
+            .take(MAX_ESCAPED_SELECTED_TEXT_CHARS)
+            .collect();
+    }
     format!("\n<selected_text_untrusted>\n{escaped}\n</selected_text_untrusted>")
 }
 
@@ -280,6 +296,21 @@ mod tests {
         let checks = out.matches('✓').count();
         assert_eq!(checks, MAX_SELECTED_TEXT_CHARS, "selection capped to MAX chars");
         assert_eq!(count(&out, CLOSE), 1);
+    }
+
+    #[test]
+    fn escaped_output_is_clamped_for_pathological_input() {
+        // 4000 '<' each escape to "&lt;" → 16000 escaped chars, must be clamped.
+        let bomb = "<".repeat(MAX_SELECTED_TEXT_CHARS);
+        let out = wrap_selected_text_untrusted(&bomb);
+        assert_eq!(count(&out, CLOSE), 1, "still exactly one real closing tag");
+        assert_eq!(count(&out, OPEN), 1);
+        // Bounded by the escaped ceiling (plus the short wrapper delimiters).
+        assert!(
+            out.chars().count() <= MAX_ESCAPED_SELECTED_TEXT_CHARS + 80,
+            "block not clamped: {} chars",
+            out.chars().count()
+        );
     }
 
     #[test]
