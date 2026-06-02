@@ -41,8 +41,10 @@ tauri-plugin-process = "2.3.1"
 tauri-plugin-autostart = "2.5.1"
 
 # Direct NSPasteboard access for lossless clipboard snapshot/restore (issue #32).
-# Already present transitively via Tauri, so this only promotes them to direct
-# dependencies — no new crates enter the cargo-audit surface.
+# objc2 / objc2-app-kit / objc2-foundation are already in the tree transitively
+# via Tauri; promoting them to direct deps pulls in exactly one additional
+# crate, objc2-core-video (a non-optional dependency of objc2-app-kit that no
+# feature flag removes). That is the full cargo-audit-surface delta.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSPasteboardItem"] }
