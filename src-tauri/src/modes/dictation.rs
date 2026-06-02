@@ -81,7 +81,9 @@ pub async fn run<R: Runtime>(
                 // user's own corrections as "divergence" and discard them.
                 if diverges_from_raw(&corrected_transcript, &haiku_out) {
                     log::warn!(
-                        "Haiku output diverged from transcript — falling back to corrected transcript. corrected={corrected_transcript:?} haiku={haiku_out:?}"
+                        "Haiku output diverged from transcript — falling back to corrected transcript. corrected={} haiku={}",
+                        crate::redact::redact(&corrected_transcript),
+                        crate::redact::redact(&haiku_out)
                     );
                     (corrected_transcript.clone(), false, true)
                 } else {

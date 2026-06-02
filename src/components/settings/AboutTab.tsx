@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import {
@@ -26,6 +27,19 @@ export default function AboutTab() {
   const [cal, setCal] = useState<MicCalibration | null>(null);
   const [update, setUpdate] = useState<UpdateState>({ kind: "idle" });
   const [appVersion, setAppVersion] = useState<string>("…");
+  const [diag, setDiag] = useState<
+    { kind: "idle" } | { kind: "busy" } | { kind: "done"; path: string } | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  async function exportDiagnostics() {
+    setDiag({ kind: "busy" });
+    try {
+      const path = await invoke<string>("export_diagnostics");
+      setDiag({ kind: "done", path });
+    } catch (err) {
+      setDiag({ kind: "error", message: String(err) });
+    }
+  }
 
   async function refresh() {
     try {
@@ -188,6 +202,30 @@ export default function AboutTab() {
             calibration step (Settings → General → Re-calibrate mic).
           </div>
         )}
+      </Section>
+
+      <Section title="Diagnostics">
+        <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3 flex items-center gap-3">
+          <div className="flex-1 text-xs text-neutral-700">
+            Export a <code className="font-mono">.zip</code> of redacted logs, app
+            version, accessibility status and hotkeys for a bug report. Transcripts and
+            clipboard text are not included unless Verbose logging is on.
+            {diag.kind === "done" && (
+              <div className="mt-1 text-emerald-700 break-all">Saved to {diag.path}</div>
+            )}
+            {diag.kind === "error" && (
+              <div className="mt-1 text-red-600 break-all">{diag.message}</div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => void exportDiagnostics()}
+            disabled={diag.kind === "busy"}
+            className="rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {diag.kind === "busy" ? "Exporting…" : "Export Diagnostics"}
+          </button>
+        </div>
       </Section>
 
       <Section title="Platform">

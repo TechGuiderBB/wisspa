@@ -137,6 +137,17 @@ export default function GeneralTab({ settings, patch }: Props) {
       </Row>
 
       <Row
+        label="Verbose logging"
+        hint="Off by default, only a redacted summary is logged. Turn on to include your transcripts, AI output and clipboard text in the log file when capturing a bug, then turn it back off. The log lives at ~/Library/Logs/Wisspa/."
+      >
+        <Toggle
+          checked={g.verbose_logging}
+          onChange={(v) => patch({ verbose_logging: v })}
+          label="Verbose logging"
+        />
+      </Row>
+
+      <Row
         label="Recording sounds"
         hint="Soft chimes when a recording starts, stops, is cancelled, or times out."
       >

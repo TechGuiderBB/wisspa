@@ -126,6 +126,12 @@ pub struct General {
     /// Off by default so existing installs keep their current UX.
     #[serde(default)]
     pub quiet_notifications: bool,
+    /// Opt-in: include raw content (transcripts, LLM output, clipboard and
+    /// selection values) in the log file. Off by default — normally only a
+    /// redacted summary (length + content hash) is logged. The user turns this
+    /// on temporarily to capture a bug, then off again (issue #33).
+    #[serde(default)]
+    pub verbose_logging: bool,
 }
 
 fn default_mic_sensitivity() -> String {
@@ -236,6 +242,7 @@ impl Default for Settings {
                 ready_chime: default_ready_chime(),
                 fast_recording_start: default_fast_recording_start(),
                 quiet_notifications: false,
+                verbose_logging: false,
             },
             hotkeys: Hotkeys {
                 // Phase 1/2 ships with safe combos; PRD §4.2 defaults to `fn` etc.
