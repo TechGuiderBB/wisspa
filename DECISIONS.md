@@ -42,16 +42,27 @@ macOS WKWebView throttles JS in fully hidden or off-screen windows, which broke 
 ### 12. Recording UI = single-pill stack (overlay-on-top-of-runtime)
 Two windows at the same top-center position: runtime (always visible, idle pill) underneath, overlay (toggled on hotkey, recording pill) on top. Eliminates the bottom-right "spare" pill earlier prototypes had. Simpler UX, single visual focal point.
 
-### 13. Recording sessions + cancellation model (issue #31)
+### 13. Default actions bundled via resource map, not a glob (issue #34)
+`seed_defaults_if_empty` (`actions/registry.rs`) copies the 14 shipped YAML files into the user's actions dir on first launch. It looks in two places: `CARGO_MANIFEST_DIR/../default-actions` (dev) and `resource_dir()/default-actions` (packaged). The bundle config had no `resources` entry, so packaged `.dmg` installs shipped **zero** default actions — verified by building `v0.1.0` and inspecting `Wisspa.app/Contents/Resources/`, which held only `icon.icns`.
+
+Fix: `bundle.resources` in `tauri.conf.json` set to the **map form**
+```json
+"resources": { "../default-actions": "default-actions" }
+```
+not the array/glob form (`["../default-actions/**"]`). Reason: Tauri places `../`-prefixed resources under a `_up_/` folder to preserve the relative path, which would land the files at `Resources/_up_/default-actions/` and miss the `resource_dir().join("default-actions")` lookup. The map form pins the destination to `Resources/default-actions/` directly. Verified post-fix against both the built `.app` and the mounted `.dmg`: 14 YAMLs present at the expected path, no `_up_` folder.
+
+The copy loop was extracted into a unit-testable `copy_yaml_files(src, dest)` helper that now also honours the long-documented "only copy files that don't yet exist" contract (previously relied on the empty-dir gate alone). A release smoke check was added to `LAUNCH.md` so this can't silently regress.
+
+### 14. Recording sessions + cancellation model (issue #31)
 Every hotkey press mints a monotonic **session id** (`session.rs`) that is threaded press → `process_audio` → mode runners → `inject_text`. Replaces the old single `CANCEL_EPOCH` counter, which only the prompt-preview wait consumed — STT, the LLM call, and injection kept running after Esc and pasted into whatever field was focused by then, and overlapping recordings could race the clipboard.
 
 **Overlap policy: latest-wins (drop-prior).** Starting a new recording supersedes any older in-flight one, so only the newest recording ever injects. This matches the dictation tool's intent (the thing you just said is the thing you want) and avoids a queue that would paste stale text seconds later. Both cancel and supersede are expressed by one `cancelled_through` watermark: a session is aborted iff `session <= cancelled_through`. `begin()` raises the watermark to the prior session; `cancel_active()` (Esc) raises it to the current session.
 
 **Cancellation aborts the work, not just the result.** A `tokio::sync::watch` channel broadcasts watermark changes; STT and the LLM call run inside `tokio::select!` against an `aborted(session)` future, so Esc (or a newer recording) drops the request future and cancels the in-flight reqwest call rather than letting it finish and discarding the output. Injection is deliberately **not** raced — it has side effects (clipboard). Instead it takes a global `tokio::sync::Mutex` (single-flight, so two completions can't interleave the clipboard read/write/restore) and re-checks `is_aborted` after acquiring the lock, returning the `CANCELLED_MARKER` without pasting if the session is stale.
 
-The mode+session pair is delivered to the frontend in a single `wisspa://start-recording` payload (previously mode and start were two separate events — a race), and the frontend echoes the session id back through `process_audio`. A `session` of 0 means an older frontend with no session plumbing and is treated as never-cancelled (legacy passthrough).
+The mode+session pair is delivered to the frontend in a single `wisspa://start-recording` payload (previously mode and start were two separate events — a race), and the frontend echoes the session id back through `process_audio`. A `session` of 0 means an older frontend with no session plumbing and is treated as never-cancelled (legacy passthrough). The matching `wisspa://stop-recording` payload carries the same mode+session so the release binds to the recording its own press began.
 
-### 14. Lossless clipboard snapshot/restore via NSPasteboard (issue #32)
+### 15. Lossless clipboard snapshot/restore via NSPasteboard (issue #32)
 Dictation injects by writing to the clipboard, pasting `Cmd+V`, then restoring the previous clipboard. The old restore path used `tauri-plugin-clipboard-manager`'s `read_text()`, which returns `Err` for any non-text clipboard (image, file reference, RTF). That `Err` was treated as "nothing to restore", so dictating while a screenshot or copied file was on the clipboard **silently destroyed it**.
 
 Chose **option 1/3 from the issue: snapshot every pasteboard flavor and restore them all** (`clipboard.rs`), via direct `NSPasteboard` access (`objc2-app-kit`). Rejected option 2 (detect non-text and skip the paste) because it kills the dictation the user asked for.
@@ -62,4 +73,4 @@ Key constraints:
 - **Promised/lazy flavors fail open.** A provider that vends data on demand returns no bytes for `dataForType:`; we can't reproduce the promise, so those flavors are skipped and the count is logged (never silently claimed as "all flavors restored").
 - **Empty clipboard:** leave the injected text in place (unchanged prior behaviour) rather than clearing.
 
-This swaps the implementation *inside* the single-flight inject mutex from #13, so the snapshot→write→paste→restore window is already serialized — two pastes can't interleave and corrupt the clipboard. Verified with a round-trip unit test against a private `pasteboardWithUniqueName` (text + binary bytes incl. 0x00/0xFF), so the test never touches the real system clipboard. `objc2`, `objc2-app-kit`, `objc2-foundation` were already in the tree transitively via Tauri; promoting them to direct deps adds exactly one crate to the lockfile — `objc2-core-video`, a non-optional dependency of `objc2-app-kit` that no feature flag removes.
+This swaps the implementation *inside* the single-flight inject mutex from #14, so the snapshot→write→paste→restore window is already serialized — two pastes can't interleave and corrupt the clipboard. Verified with a round-trip unit test against a private `pasteboardWithUniqueName` (text + binary bytes incl. 0x00/0xFF), so the test never touches the real system clipboard. `objc2`, `objc2-app-kit`, `objc2-foundation` were already in the tree transitively via Tauri; promoting them to direct deps adds exactly one crate to the lockfile — `objc2-core-video`, a non-optional dependency of `objc2-app-kit` that no feature flag removes.
