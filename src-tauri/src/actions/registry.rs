@@ -62,16 +62,35 @@ pub fn seed_defaults_if_empty<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
         .find(|p| p.is_dir())
         .ok_or_else(|| anyhow::anyhow!("default-actions source dir not found"))?;
 
-    for entry in std::fs::read_dir(&src)? {
+    let copied = copy_yaml_files(&src, &user_dir)?;
+    log::info!(
+        "seeded {copied} default actions into {}",
+        user_dir.display()
+    );
+    Ok(())
+}
+
+/// Copy every `.yaml`/`.yml` file from `src` into `dest`, skipping any file that
+/// already exists so a user's edits are never clobbered. Returns the count copied.
+///
+/// Extracted from `seed_defaults_if_empty` so the copy behaviour is unit-testable
+/// without a Tauri `AppHandle`, and so it honours the documented "only copy files
+/// that don't yet exist" contract rather than relying solely on the empty-dir gate.
+fn copy_yaml_files(src: &Path, dest: &Path) -> Result<usize> {
+    let mut copied = 0;
+    for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let p = entry.path();
         if p.extension().is_some_and(|x| x == "yaml" || x == "yml") {
-            let dest = user_dir.join(p.file_name().unwrap());
-            std::fs::copy(&p, &dest).with_context(|| format!("copy {p:?}"))?;
+            let target = dest.join(p.file_name().unwrap());
+            if target.exists() {
+                continue;
+            }
+            std::fs::copy(&p, &target).with_context(|| format!("copy {p:?}"))?;
+            copied += 1;
         }
     }
-    log::info!("seeded default actions into {}", user_dir.display());
-    Ok(())
+    Ok(copied)
 }
 
 /// Load every yaml file in `dir`, populate the global registry. Invalid files
@@ -235,4 +254,105 @@ fn migrate_known_actions<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Minimal std-only temp directory with cleanup on drop, so the tests avoid
+    /// pulling in a `tempfile` dev-dependency (every crate added shows up in the
+    /// cargo-audit cron).
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            static N: AtomicUsize = AtomicUsize::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "wisspa-registry-test-{}-{}",
+                std::process::id(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ));
+            // Clear any leftovers from a crashed/aborted prior run that reused
+            // this PID (the counter resets to 0 each process), so a test never
+            // starts against stale files.
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            TempDir(path)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write(dir: &Path, name: &str, body: &str) {
+        std::fs::write(dir.join(name), body).unwrap();
+    }
+
+    #[test]
+    fn copies_only_yaml_into_empty_dir() {
+        let src = TempDir::new();
+        let dest = TempDir::new();
+        write(src.path(), "a.yaml", "id: a");
+        write(src.path(), "b.yml", "id: b");
+        write(src.path(), "README.md", "not an action");
+        write(src.path(), "notes.txt", "ignore me");
+
+        let copied = copy_yaml_files(src.path(), dest.path()).unwrap();
+
+        assert_eq!(copied, 2, "only the two yaml/yml files should be copied");
+        assert!(dest.path().join("a.yaml").exists());
+        assert!(dest.path().join("b.yml").exists());
+        assert!(!dest.path().join("README.md").exists());
+        assert!(!dest.path().join("notes.txt").exists());
+    }
+
+    #[test]
+    fn skips_files_that_already_exist() {
+        let src = TempDir::new();
+        let dest = TempDir::new();
+        write(src.path(), "keep.yaml", "id: shipped-default");
+        // User has already customised their copy.
+        write(dest.path(), "keep.yaml", "id: user-edited");
+
+        let copied = copy_yaml_files(src.path(), dest.path()).unwrap();
+
+        assert_eq!(copied, 0, "an existing file must not be overwritten");
+        assert_eq!(
+            std::fs::read_to_string(dest.path().join("keep.yaml")).unwrap(),
+            "id: user-edited",
+            "the user's edit must survive"
+        );
+    }
+
+    #[test]
+    fn bundled_default_actions_match_shipped_count() {
+        // Guard against the packaging regression in issue #34: the repo's
+        // default-actions/ directory must contain the yaml files we expect to
+        // ship. tauri.conf.json bundles this directory into the app under
+        // Contents/Resources/default-actions/ (verified against the built .app
+        // and .dmg in the PR), where seed_defaults_if_empty() reads it on a
+        // fresh install.
+        let repo_defaults = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("default-actions");
+        let count = std::fs::read_dir(&repo_defaults)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .is_some_and(|x| x == "yaml" || x == "yml")
+            })
+            .count();
+        assert_eq!(count, 14, "expected 14 default action yaml files to ship");
+    }
 }
