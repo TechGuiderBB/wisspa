@@ -274,6 +274,10 @@ mod tests {
                 std::process::id(),
                 N.fetch_add(1, Ordering::Relaxed)
             ));
+            // Clear any leftovers from a crashed/aborted prior run that reused
+            // this PID (the counter resets to 0 each process), so a test never
+            // starts against stale files.
+            let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).unwrap();
             TempDir(path)
         }
