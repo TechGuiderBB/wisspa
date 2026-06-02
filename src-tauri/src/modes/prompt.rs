@@ -19,6 +19,7 @@ pub async fn run<R: Runtime>(
     app: &AppHandle<R>,
     anthropic_api_key: &str,
     raw_transcript: &str,
+    session: u64,
 ) -> Result<PromptOutcome> {
     let settings = settings_store::load(app).unwrap_or_default();
     let pm = &settings.prompt_mode;
@@ -78,14 +79,21 @@ pub async fn run<R: Runtime>(
     };
     let selection_captured = !selected_text.is_empty();
 
-    let rewritten = llm::sonnet_prompt_rewrite(
-        anthropic_api_key,
-        raw_transcript,
-        &active_app,
-        browser_context.as_ref(),
-        &selected_text,
-    )
-    .await?;
+    // Race the rewrite against cancellation: an Esc (or a newer recording)
+    // drops the request future, cancelling the in-flight HTTP call (issue #31).
+    let rewritten = tokio::select! {
+        biased;
+        _ = crate::session::aborted(session) => {
+            return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
+        }
+        r = llm::sonnet_prompt_rewrite(
+            anthropic_api_key,
+            raw_transcript,
+            &active_app,
+            browser_context.as_ref(),
+            &selected_text,
+        ) => r?,
+    };
 
     if rewritten.trim().is_empty() {
         return Err(anyhow::anyhow!("Sonnet returned empty rewrite"));
@@ -101,15 +109,13 @@ pub async fn run<R: Runtime>(
             "Prompt generated",
             &format!("Inserting in {}s — {preview}", pm.preview_timeout_seconds),
         );
-        // Capture the cancel epoch at the start of the wait; any Esc press
-        // bumps it, so we see a mismatch and abort. Works under concurrent
-        // pipelines because every wait observes its own starting epoch.
-        let start_epoch = crate::hotkeys::current_cancel_epoch();
+        // Wait out the preview window, but bail immediately if this session is
+        // cancelled (Esc) or superseded by a newer recording (issue #31).
         let deadline =
             tokio::time::Instant::now() + Duration::from_secs(pm.preview_timeout_seconds as u64);
         loop {
-            if crate::hotkeys::current_cancel_epoch() != start_epoch {
-                log::info!("prompt preview cancelled via Esc");
+            if crate::session::is_aborted(session) {
+                log::info!("prompt preview cancelled (session {session})");
                 return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
             }
             if tokio::time::Instant::now() >= deadline {
@@ -119,7 +125,7 @@ pub async fn run<R: Runtime>(
         }
     }
 
-    injector::inject_text(app, &rewritten, inject_target.as_deref()).await?;
+    injector::inject_text(app, &rewritten, inject_target.as_deref(), session).await?;
 
     Ok(PromptOutcome {
         inserted: rewritten,

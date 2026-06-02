@@ -1,7 +1,14 @@
 use anyhow::{Context, Result};
+use once_cell::sync::Lazy;
 use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_clipboard_manager::ClipboardExt;
+
+/// Serialises the whole clipboard read → write → paste → restore window so two
+/// pipelines completing close together can't interleave and corrupt the
+/// clipboard or paste each other's text (issue #31). A `tokio::sync::Mutex` is
+/// required (not `std::sync::Mutex`) because the guard is held across `.await`.
+static INJECT_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
 #[cfg(target_os = "macos")]
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -20,20 +27,37 @@ pub fn accessibility_trusted() -> bool {
 }
 
 /// Inject `text` into the user's intended target app by:
-/// 1. Saving the current clipboard text (best-effort).
+/// 1. Snapshotting all current clipboard flavors as owned bytes (issue #32).
 /// 2. Writing `text` to the clipboard.
 /// 3. If `target_app` is set, re-activating it (in case another app stole
 ///    focus when our global hotkey fired — e.g. Perplexity intercepting
 ///    Cmd+Shift+P alongside Wisspa).
 /// 4. Simulating Cmd+V.
-/// 5. After ~250ms, restoring the previous clipboard content.
+/// 5. After ~250ms, restoring the snapshotted clipboard content (images,
+///    files, RTF — not just text).
+///
+/// The whole window runs under a single-flight mutex with a `session` abort
+/// check (issue #31) so two pastes can't interleave the snapshot/restore.
 pub async fn inject_text<R: Runtime>(
     app: &AppHandle<R>,
     text: &str,
     target_app: Option<&str>,
+    session: u64,
 ) -> Result<()> {
     if text.is_empty() {
         return Ok(());
+    }
+
+    // Single-flight: only one injection touches the clipboard at a time. If a
+    // newer recording is already pasting, this one waits its turn here.
+    let _guard = INJECT_LOCK.lock().await;
+
+    // Re-check after acquiring the lock: the user may have pressed Esc, or a
+    // newer recording may have superseded this one, while we were queued. Never
+    // paste stale text into whatever field is now focused (issue #31).
+    if crate::session::is_aborted(session) {
+        log::info!("inject aborted before paste: session {session} cancelled/superseded");
+        return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
     }
 
     if !accessibility_trusted() {
@@ -48,21 +72,19 @@ pub async fn inject_text<R: Runtime>(
         ));
     }
 
-    log::info!("inject step 1: reading clipboard");
+    log::info!("inject step 1: snapshotting clipboard (all flavors)");
     let clipboard = app.clipboard();
-    // read_text() returns Err for an empty clipboard, for one holding
-    // non-text content (image, file), AND for transient plugin/OS failures.
-    // Keep `prev = None` in all error cases so we never restore garbage,
-    // but log the underlying error so a real read failure does not get
-    // silently labelled as "empty or non-text" in step 5's restore branch.
-    // Known limitation: clipboard-nontextcontent-lost-after-inject.
-    let prev = match clipboard.read_text() {
-        Ok(text) => Some(text),
-        Err(e) => {
-            log::debug!("clipboard read_text failed (treating as empty/non-text): {e}");
-            None
-        }
-    };
+    // Snapshot every pasteboard flavor as owned bytes so images, file
+    // references, RTF etc. survive the paste — not just plain text (issue #32).
+    let snapshot = crate::clipboard::snapshot();
+    if snapshot.skipped_promised > 0 {
+        log::debug!(
+            "clipboard snapshot: {} item(s), {} flavor(s), {} promised flavor(s) not restorable",
+            snapshot.item_count(),
+            snapshot.flavor_count(),
+            snapshot.skipped_promised
+        );
+    }
 
     log::info!("inject step 2: writing {} chars to clipboard", text.len());
     clipboard
@@ -93,15 +115,14 @@ pub async fn inject_text<R: Runtime>(
     // Give the target app time to consume the paste.
     tokio::time::sleep(Duration::from_millis(250)).await;
 
-    log::info!("inject step 5: restoring previous clipboard");
-    if let Some(prev_text) = prev {
-        let _ = clipboard.write_text(prev_text);
+    log::info!("inject step 5: restoring previous clipboard (all flavors)");
+    if snapshot.is_empty() {
+        // Clipboard was empty (or held only un-restorable promised flavors)
+        // before injection. Leave the injected text in place rather than
+        // clearing, so Cmd+V still works if the user pastes again.
+        log::debug!("clipboard pre-injection content was empty; leaving injected text");
     } else {
-        // Clipboard was empty or held non-text content before injection.
-        // We cannot restore non-text content (images, files) with this API.
-        // Leave the clipboard holding the injected text rather than
-        // writing an empty string, so Cmd+V still works if the user pastes again.
-        log::debug!("clipboard pre-injection content was empty or non-text; not restoring");
+        crate::clipboard::restore(&snapshot);
     }
 
     log::info!("inject step 6: done");
