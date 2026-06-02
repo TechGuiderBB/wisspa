@@ -16,6 +16,7 @@ mod modes;
 mod permissions;
 mod prearm;
 mod selection;
+mod session;
 mod settings_store;
 mod sounds;
 mod stt;

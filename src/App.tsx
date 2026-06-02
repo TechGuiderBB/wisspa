@@ -68,6 +68,10 @@ function Runtime() {
   // Monotonic id for processAudio pipelines. A newer STOP bumps it; a stale
   // completion checks it before applying transcript / clearing isProcessing.
   const processIdRef = useRef(0);
+  // Backend session id for the in-flight recording, minted by Rust on hotkey
+  // press and delivered in the START payload. Passed to process_audio so the
+  // backend can cancel/supersede the pipeline (issue #31). 0 = no recording.
+  const sessionRef = useRef(0);
   // Mode the in-flight recording is for. Set from `wisspa://recording-mode`
   // emitted by Rust at hotkey-press time; read at hotkey-release time.
   const modeRef = (Runtime as unknown as { _modeRef?: { current: RecordingMode } })
@@ -127,7 +131,18 @@ function Runtime() {
       }
     }).then(track);
 
-    listen(START_EVENT, async () => {
+    listen<{ mode: RecordingMode; session: number }>(START_EVENT, async (e) => {
+      // Mode + session arrive together in one event so this recording is bound
+      // to the right mode and a unique backend session (issue #31).
+      const payload = e.payload;
+      if (
+        payload?.mode === "dictation" ||
+        payload?.mode === "action" ||
+        payload?.mode === "prompt"
+      ) {
+        modeRef.current = payload.mode;
+      }
+      sessionRef.current = payload?.session ?? 0;
       try {
         setError(null);
         await startRecording();
@@ -160,14 +175,21 @@ function Runtime() {
       }
     }).then(track);
 
-    listen(STOP_EVENT, async () => {
+    listen<{ mode: RecordingMode; session: number }>(STOP_EVENT, async (e) => {
       if (recordingTimerRef.current !== null) {
         clearTimeout(recordingTimerRef.current);
         recordingTimerRef.current = null;
       }
-      // Capture the mode up front: a MODE_EVENT arriving mid-pipeline must not
-      // change which mode this blob is reported, displayed, and processed as.
-      const mode = modeRef.current;
+      // Bind to the mode + session carried by THIS stop event (the one its own
+      // press began), not the refs — a second recording hotkey pressed before
+      // this one was released would have overwritten the refs (issue #31).
+      // Fall back to the refs if an older backend omitted the payload.
+      const payload = e.payload;
+      const mode: RecordingMode =
+        payload?.mode === "dictation" || payload?.mode === "action" || payload?.mode === "prompt"
+          ? payload.mode
+          : modeRef.current;
+      const session = payload?.session ?? sessionRef.current;
       try {
         const result = await stopRecording();
         setRecording(false);
@@ -208,6 +230,7 @@ function Runtime() {
             b64,
             blob.type || "audio/webm",
             mode,
+            session,
           );
           if (processId === processIdRef.current) {
             setTranscript(transcript);

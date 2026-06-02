@@ -257,8 +257,12 @@ pub async fn process_audio<R: Runtime>(
     audio_b64: String,
     mime_type: String,
     mode: Option<String>,
+    session: Option<u64>,
 ) -> Result<String, String> {
     let mode = mode.unwrap_or_else(|| "dictation".to_string());
+    // Session id minted on hotkey press and echoed back by the frontend. 0 =
+    // an older frontend with no session plumbing (treated as never-cancelled).
+    let session = session.unwrap_or(0);
     let bytes = STANDARD
         .decode(audio_b64.as_bytes())
         .map_err(|e| format!("base64 decode: {e}"))?;
@@ -279,22 +283,35 @@ pub async fn process_audio<R: Runtime>(
             .collect();
         Some(words.join(", "))
     };
-    let transcript = match stt::transcribe_audio(
-        &groq_key,
-        bytes,
-        &mime_type,
-        &settings.stt.language,
-        &settings.stt.model,
-        vocab_hint.as_deref(),
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("STT failed: {e:#}");
-            toast::error(&app, "Transcription failed", &format!("{e:#}"));
-            return Err(format!("transcribe: {e:#}"));
+    // Race STT against cancellation. An Esc (or a newer recording) drops the
+    // transcribe future, cancelling the in-flight Groq request rather than
+    // letting it run to completion and discarding the result (issue #31).
+    let transcript = tokio::select! {
+        biased;
+        _ = crate::session::aborted(session) => {
+            log::info!("process_audio aborted during STT (session {session})");
+            let _ = history::insert(history::NewEntry {
+                mode: mode.clone(),
+                status: "cancelled".to_string(),
+                ..Default::default()
+            });
+            return Ok(String::new());
         }
+        res = stt::transcribe_audio(
+            &groq_key,
+            bytes,
+            &mime_type,
+            &settings.stt.language,
+            &settings.stt.model,
+            vocab_hint.as_deref(),
+        ) => match res {
+            Ok(t) => t,
+            Err(e) => {
+                log::error!("STT failed: {e:#}");
+                toast::error(&app, "Transcription failed", &format!("{e:#}"));
+                return Err(format!("transcribe: {e:#}"));
+            }
+        },
     };
 
     log::info!("transcript ({mode}): {transcript:?}");
@@ -337,19 +354,33 @@ pub async fn process_audio<R: Runtime>(
         _ => settings_store::apply_vocabulary(&transcript, &settings.vocabulary),
     };
 
+    // Checkpoint between the (now-finished) STT call and the side-effectful
+    // mode work: if the user cancelled or started a newer recording while STT
+    // was resolving, stop here — no LLM call, no action, no paste (issue #31).
+    if crate::session::is_aborted(session) {
+        log::info!("process_audio aborted before {mode} dispatch (session {session})");
+        let _ = history::insert(history::NewEntry {
+            mode: mode.clone(),
+            raw_transcript: transcript.clone(),
+            status: "cancelled".to_string(),
+            ..Default::default()
+        });
+        return Ok(String::new());
+    }
+
     let started = std::time::Instant::now();
     // action mode returns (text, matched_action_id) so history can record which action ran.
     let (result, matched_action_id): (Result<String, String>, Option<String>) =
         match mode.as_str() {
             "action" => {
-                let r = run_action_mode(&app, &transcript).await;
+                let r = run_action_mode(&app, &transcript, session).await;
                 match r {
                     Ok((text, aid)) => (Ok(text), aid),
                     Err(e) => (Err(e), None),
                 }
             }
-            "prompt" => (run_prompt_mode(&app, &state, &transcript).await, None),
-            _ => (run_dictation_mode(&app, &state, &transcript).await, None),
+            "prompt" => (run_prompt_mode(&app, &state, &transcript, session).await, None),
+            _ => (run_dictation_mode(&app, &state, &transcript, session).await, None),
         };
     let duration_ms = started.elapsed().as_millis() as i64;
     let active_app = crate::app_detector::frontmost_app_name().await.ok();
@@ -380,9 +411,10 @@ async fn run_prompt_mode<R: Runtime>(
     app: &AppHandle<R>,
     state: &State<'_, AppState>,
     transcript: &str,
+    session: u64,
 ) -> Result<String, String> {
     let anthropic_key = state.anthropic_key();
-    match prompt_mode::run(app, &anthropic_key, transcript).await {
+    match prompt_mode::run(app, &anthropic_key, transcript, session).await {
         Ok(outcome) => {
             let preview = preview(&outcome.inserted);
             let mut suffix = Vec::new();
@@ -419,9 +451,10 @@ async fn run_dictation_mode<R: Runtime>(
     app: &AppHandle<R>,
     state: &State<'_, AppState>,
     transcript: &str,
+    session: u64,
 ) -> Result<String, String> {
     let anthropic_key = state.anthropic_key();
-    match dictation::run(app, &anthropic_key, transcript).await {
+    match dictation::run(app, &anthropic_key, transcript, session).await {
         Ok(outcome) => {
             // Success path: the cleaned transcript appears in the focused app
             // the moment it's pasted, so a macOS banner is redundant. Keep the
@@ -436,9 +469,14 @@ async fn run_dictation_mode<R: Runtime>(
             Ok(outcome.inserted)
         }
         Err(e) => {
+            let msg = format!("{e:#}");
+            if msg == crate::hotkeys::CANCELLED_MARKER {
+                log::info!("dictation cancelled by user (Esc) or superseded");
+                return Err(crate::hotkeys::CANCELLED_MARKER.to_string());
+            }
             log::error!("dictation pipeline failed: {e:#}");
-            toast::error(app, "Insertion failed", &format!("{e:#}"));
-            Err(format!("dictation: {e:#}"))
+            toast::error(app, "Insertion failed", &msg);
+            Err(format!("dictation: {msg}"))
         }
     }
 }
@@ -446,8 +484,9 @@ async fn run_dictation_mode<R: Runtime>(
 async fn run_action_mode<R: Runtime>(
     app: &AppHandle<R>,
     transcript: &str,
+    session: u64,
 ) -> Result<(String, Option<String>), String> {
-    match action_mode::run(app, transcript).await {
+    match action_mode::run(app, transcript, session).await {
         Ok(outcome) => {
             let action_id = outcome.matched_action_id.clone();
             if outcome.success {
@@ -462,9 +501,14 @@ async fn run_action_mode<R: Runtime>(
             }
         }
         Err(e) => {
+            let msg = format!("{e:#}");
+            if msg == crate::hotkeys::CANCELLED_MARKER {
+                log::info!("action cancelled by user (Esc) or superseded");
+                return Err(crate::hotkeys::CANCELLED_MARKER.to_string());
+            }
             log::error!("action mode failed: {e:#}");
-            toast::error(app, "Action failed", &format!("{e:#}"));
-            Err(format!("action: {e:#}"))
+            toast::error(app, "Action failed", &msg);
+            Err(format!("action: {msg}"))
         }
     }
 }
