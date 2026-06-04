@@ -30,3 +30,10 @@ src-tauri/gen/
 
 # Logs
 *.log
+
+# Codex / agent session state
+.context/
+
+# Loop runtime artefacts (state files + tick digests should live under ~/loops/state/, not in the repo)
+.loop-state-*.json
+.tick-digest-*.md
