@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   HistoryEntry,
   clearHistory,
@@ -94,6 +94,7 @@ export default function HistoryTab() {
               <th className="text-left px-3 py-2 font-medium">Snippet</th>
               <th className="text-right px-3 py-2 font-medium">ms</th>
               <th className="text-left px-3 py-2 font-medium">Status</th>
+              <th className="text-right px-3 py-2 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -109,8 +110,29 @@ export default function HistoryTab() {
 
 function Row({ entry }: { entry: HistoryEntry }) {
   const when = new Date(entry.timestamp);
-  const snippet = (entry.output ?? entry.raw_transcript ?? "").trim();
-  const short = snippet.length > 80 ? snippet.slice(0, 80) + "…" : snippet;
+  // Same precedence as the visible snippet column: output first, then raw_transcript.
+  const text = (entry.output ?? entry.raw_transcript ?? "").trim();
+  const short = text.length > 80 ? text.slice(0, 80) + "…" : text;
+  const hasText = text.length > 0;
+
+  const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [editCopied, setEditCopied] = useState(false);
+  const [editCopyFailed, setEditCopyFailed] = useState(false);
+
+  // Store timer IDs so we can clear them on unmount (prevents setState on unmounted row).
+  const copyTimerRef = useRef<number | null>(null);
+  const editCopyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+      if (editCopyTimerRef.current !== null) window.clearTimeout(editCopyTimerRef.current);
+    };
+  }, []);
+
   const modeStyles: Record<string, string> = {
     dictation: "bg-blue-100 text-blue-700",
     action: "bg-violet-100 text-violet-700",
@@ -121,41 +143,145 @@ function Row({ entry }: { entry: HistoryEntry }) {
     failure: "bg-red-100 text-red-700",
     cancelled: "bg-slate-100 text-slate-600",
   };
+
+  async function handleCopyText() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setCopyFailed(false);
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      console.error("Clipboard write failed:", err);
+      setCopied(false);
+      setCopyFailed(true);
+      if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = window.setTimeout(() => setCopyFailed(false), 1500);
+    }
+  }
+
+  async function handleCopyDraft() {
+    try {
+      await navigator.clipboard.writeText(draft);
+      setEditCopied(true);
+      setEditCopyFailed(false);
+      if (editCopyTimerRef.current !== null) window.clearTimeout(editCopyTimerRef.current);
+      editCopyTimerRef.current = window.setTimeout(() => setEditCopied(false), 1500);
+    } catch (err) {
+      console.error("Clipboard write failed:", err);
+      setEditCopied(false);
+      setEditCopyFailed(true);
+      if (editCopyTimerRef.current !== null) window.clearTimeout(editCopyTimerRef.current);
+      editCopyTimerRef.current = window.setTimeout(() => setEditCopyFailed(false), 1500);
+    }
+  }
+
+  function handleReuseClick() {
+    if (!editing) {
+      // Always re-seed from the entry on open — drafts are ephemeral.
+      setDraft(text);
+    }
+    setEditing(!editing);
+  }
+
+  const copyLabel = copyFailed ? "Failed" : copied ? "Copied" : "Copy";
+  const editCopyLabel = editCopyFailed ? "Failed" : editCopied ? "Copied" : "Copy edited";
+
+  // NOTE: colSpan={7} must match the 7-column thead above (When, Mode, App, Snippet, ms, Status, Actions).
   return (
-    <tr className="border-t border-slate-100 hover:bg-slate-50/60">
-      <td className="px-3 py-2 text-slate-500 tabular-nums whitespace-nowrap">
-        {when.toLocaleString([], {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        })}
-      </td>
-      <td className="px-3 py-2">
-        <span
-          className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
-            modeStyles[entry.mode] ?? "bg-slate-100 text-slate-600"
-          }`}
-        >
-          {entry.mode}
-        </span>
-      </td>
-      <td className="px-3 py-2 text-slate-600 whitespace-nowrap max-w-[120px] truncate">
-        {entry.active_app ?? "—"}
-      </td>
-      <td className="px-3 py-2 text-slate-800">{short || "—"}</td>
-      <td className="px-3 py-2 text-right text-slate-500 tabular-nums">
-        {entry.duration_ms ?? "—"}
-      </td>
-      <td className="px-3 py-2">
-        <span
-          className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-            statusStyles[entry.status] ?? "bg-slate-100 text-slate-600"
-          }`}
-        >
-          {entry.status}
-        </span>
-      </td>
-    </tr>
+    <>
+      <tr className="border-t border-slate-100 hover:bg-slate-50/60">
+        <td className="px-3 py-2 text-slate-500 tabular-nums whitespace-nowrap">
+          {when.toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </td>
+        <td className="px-3 py-2">
+          <span
+            className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
+              modeStyles[entry.mode] ?? "bg-slate-100 text-slate-600"
+            }`}
+          >
+            {entry.mode}
+          </span>
+        </td>
+        <td className="px-3 py-2 text-slate-600 whitespace-nowrap max-w-[120px] truncate">
+          {entry.active_app ?? "—"}
+        </td>
+        <td className="px-3 py-2 text-slate-800">{short || "—"}</td>
+        <td className="px-3 py-2 text-right text-slate-500 tabular-nums">
+          {entry.duration_ms ?? "—"}
+        </td>
+        <td className="px-3 py-2">
+          <span
+            className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+              statusStyles[entry.status] ?? "bg-slate-100 text-slate-600"
+            }`}
+          >
+            {entry.status}
+          </span>
+        </td>
+        <td className="px-3 py-2">
+          <div className="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              className="px-2 py-1 text-xs"
+              disabled={!hasText}
+              onClick={handleCopyText}
+            >
+              {copyLabel}
+            </Button>
+            <Button
+              variant="ghost"
+              className="px-2 py-1 text-xs"
+              disabled={!hasText}
+              onClick={handleReuseClick}
+              aria-expanded={editing}
+            >
+              Re-use
+            </Button>
+          </div>
+        </td>
+      </tr>
+      {editing && (
+        <tr className="border-t border-slate-100 bg-slate-50/40">
+          <td colSpan={7} className="px-3 py-3">
+            <label
+              htmlFor={`history-edit-${entry.id}`}
+              className="block text-xs text-slate-600 mb-1"
+            >
+              Edit before copying
+            </label>
+            <textarea
+              id={`history-edit-${entry.id}`}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={4}
+              className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30 resize-none"
+            />
+            <div className="flex gap-2 justify-end mt-2">
+              <Button
+                variant="ghost"
+                className="px-2 py-1 text-xs"
+                onClick={() => setEditing(false)}
+              >
+                Done
+              </Button>
+              <Button
+                variant="secondary"
+                className="px-2 py-1 text-xs"
+                disabled={draft.trim().length === 0}
+                onClick={handleCopyDraft}
+              >
+                {editCopyLabel}
+              </Button>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
