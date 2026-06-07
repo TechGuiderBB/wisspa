@@ -29,5 +29,7 @@ export function routeBadge(route: PromptRoute): RouteBadge {
       return { text: "Content", tone: "content" };
     case "unknown":
       return { text: "Detecting", tone: "neutral" };
+    default:
+      return { text: "Detecting", tone: "neutral" };
   }
 }

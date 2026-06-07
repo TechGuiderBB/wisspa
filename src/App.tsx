@@ -59,7 +59,7 @@ export default function App() {
 }
 
 function Runtime() {
-  const { lastError, setRecording, setTranscript, setError, setRoute } = useRecording();
+  const { lastError, setRecording, setTranscript, setError } = useRecording();
   // Transient warning state shown directly on the always-visible pill so the
   // user gets feedback even if they missed the macOS notification banner.
   const [statusFlash, setStatusFlash] = useState<StatusFlash | null>(null);
@@ -148,8 +148,6 @@ function Runtime() {
         modeRef.current = payload.mode;
       }
       sessionRef.current = payload?.session ?? 0;
-      // Clear any route from a prior recording so stale data never lingers.
-      setRoute(null);
       try {
         setError(null);
         await startRecording();
@@ -264,7 +262,6 @@ function Runtime() {
       cancelRecording();
       setRecording(false);
       setIsProcessing(false);
-      setRoute(null);
     }).then(track);
 
     // Opt-in pre-warm (fast_recording_start): the Rust modifier monitor warms
@@ -297,7 +294,6 @@ function Runtime() {
       // Session guard: ignore stale events from superseded recordings.
       // session === 0 is legacy passthrough for older backend builds.
       if (payload.session !== 0 && payload.session !== sessionRef.current) return;
-      setRoute(payload);
       // Post-result flash: only when the branch is resolved (Sonnet has returned).
       if (payload.branch !== "unknown") {
         const badge = routeBadge(payload);
@@ -320,7 +316,7 @@ function Runtime() {
         flashTimerRef.current = null;
       }
     };
-  }, [setError, setRecording, setTranscript, setRoute]);
+  }, [setError, setRecording, setTranscript]);
 
   // Pill state precedence: error flash > route flash > thinking > idle.
   // Recording state is shown by the overlay window which stacks on top.
