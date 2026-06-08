@@ -17,6 +17,12 @@ import {
   resolveSilenceThresholds,
   type Settings,
 } from "./lib/settings";
+import {
+  type PromptRoute,
+  PROMPT_ROUTE_EVENT,
+  routeLabel,
+  routeBadge,
+} from "./lib/promptRoute";
 import { useRecording } from "./store/recording";
 import RecordingOverlay from "./components/RecordingOverlay";
 import SettingsPage from "./pages/Settings";
@@ -30,10 +36,9 @@ const STATUS_EVENT = "wisspa://recording-status";
 const PREWARM_EVENT = "wisspa://prewarm-mic";
 const PREWARM_CANCEL_EVENT = "wisspa://prewarm-cancel";
 
-type StatusFlash = {
-  kind: "no-speech" | "error";
-  message: string;
-};
+type StatusFlash =
+  | { kind: "no-speech" | "error"; message: string }
+  | { kind: "route"; message: string; tone: "ai" | "content" | "neutral" };
 
 const HASH = typeof window !== "undefined" ? window.location.hash : "";
 const isOverlayWindow = HASH === "#overlay";
@@ -283,6 +288,26 @@ function Runtime() {
       }, 2800);
     }).then(track);
 
+    listen<PromptRoute>(PROMPT_ROUTE_EVENT, (e) => {
+      const payload = e.payload;
+      if (!payload) return;
+      // Session guard: ignore stale events from superseded recordings.
+      // session === 0 is legacy passthrough for older backend builds.
+      if (payload.session !== 0 && payload.session !== sessionRef.current) return;
+      // Post-result flash: only when the branch is resolved (Sonnet has returned).
+      if (payload.branch !== "unknown") {
+        const badge = routeBadge(payload);
+        const label = routeLabel(payload);
+        const message = `${badge.text} → ${label}`;
+        setStatusFlash({ kind: "route", message, tone: badge.tone });
+        if (flashTimerRef.current !== null) clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = window.setTimeout(() => {
+          setStatusFlash(null);
+          flashTimerRef.current = null;
+        }, 2800);
+      }
+    }).then(track);
+
     return () => {
       cancelled = true;
       unlistens.forEach((u) => u());
@@ -293,8 +318,8 @@ function Runtime() {
     };
   }, [setError, setRecording, setTranscript]);
 
-  // Pill state precedence: error flash > thinking > idle. Recording state is
-  // shown by the overlay window which stacks on top.
+  // Pill state precedence: error flash > route flash > thinking > idle.
+  // Recording state is shown by the overlay window which stacks on top.
   const flashing = statusFlash !== null;
   const thinking = isProcessing && !flashing;
   const thinkingLabel =
@@ -303,12 +328,23 @@ function Runtime() {
       : processingMode === "action"
         ? "Running..."
         : "Transcribing...";
+
+  // Background colour for the route flash adapts to the detected destination type.
+  const flashBg =
+    statusFlash?.kind === "route"
+      ? statusFlash.tone === "content"
+        ? "bg-emerald-600/80"
+        : statusFlash.tone === "neutral"
+          ? "bg-black/60"
+          : "bg-violet-600/80"
+      : "bg-amber-500/85";
+
   return (
     <div className="h-screen w-screen flex items-center justify-center">
       <div
         className={`flex items-center gap-2 rounded-full px-4 py-2 backdrop-blur-md shadow-lg transition-colors duration-200 ${
           flashing
-            ? "bg-amber-500/85"
+            ? flashBg
             : thinking
               ? "bg-violet-600/80"
               : "bg-black/60"
