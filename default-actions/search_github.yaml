@@ -3,6 +3,8 @@ name: "Search GitHub"
 description: "Opens a GitHub repo search in the default browser"
 triggers:
   - "search GitHub for"
+  - "github"
+  - "git hub"
 type: open_url
 command: "https://github.com/search?q={query}&type=repositories"
 working_dir: null
