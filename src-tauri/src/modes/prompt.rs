@@ -1,7 +1,67 @@
 use crate::{app_detector, injector, llm, selection, settings_store, toast};
 use anyhow::Result;
 use std::time::Duration;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
+
+/// Routing-transparency event consumed by the recording overlay + main window.
+/// Matches the frontend `PROMPT_ROUTE_EVENT` in `src/lib/promptRoute.ts`.
+pub const EVENT_PROMPT_ROUTE: &str = "wisspa://prompt-route";
+
+/// Payload for `EVENT_PROMPT_ROUTE`. Field names mirror the frontend `PromptRoute`
+/// type exactly (serde keeps these lowercase names, which the TS union expects).
+#[derive(serde::Serialize, Clone)]
+struct PromptRoutePayload {
+    /// Recording session id; the frontend's stale-event guard drops any payload
+    /// whose session != the current recording (0 is legacy passthrough).
+    session: u64,
+    /// Resolved destination app (System Events process name, or manual override).
+    app: String,
+    /// Browser host when the destination is a known browser tab, else null.
+    host: Option<String>,
+    /// "prompt" (AI-tool destination, Sonnet Branch A) or "content" (non-AI
+    /// destination, Branch B). The destination is always resolved before this
+    /// fires, so we never emit "unknown".
+    branch: &'static str,
+    /// "manual" when a manual app override is set, else "auto".
+    source: &'static str,
+}
+
+/// Extract a clean host from a browser tab URL: strip scheme, userinfo, port,
+/// path/query/fragment and a leading `www.`. Returns "" when there's nothing
+/// host-like, so callers can treat empty as "no host".
+fn host_from_url(url: &str) -> String {
+    let after_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or(host);
+    host.strip_prefix("www.").unwrap_or(host).to_string()
+}
+
+/// Classify the destination the same way Sonnet's Branch A/B split does: an AI
+/// chat tool (by host or app name) takes a *prompt*; anything else takes finished
+/// *content*. Host is the stronger signal when present (a browser tab).
+fn classify_branch(app: &str, host: Option<&str>) -> &'static str {
+    const AI_HOSTS: &[&str] = &[
+        "claude.ai",
+        "chatgpt.com",
+        "chat.openai.com",
+        "gemini.google.com",
+        "perplexity.ai",
+        "copilot.microsoft.com",
+        "poe.com",
+        "grok.com",
+    ];
+    const AI_APPS: &[&str] = &["claude", "chatgpt", "cursor", "gemini", "perplexity", "copilot"];
+    let host_l = host.unwrap_or("").to_lowercase();
+    let app_l = app.to_lowercase();
+    let is_ai =
+        AI_HOSTS.iter().any(|h| host_l.contains(h)) || AI_APPS.iter().any(|a| app_l.contains(a));
+    if is_ai {
+        "prompt"
+    } else {
+        "content"
+    }
+}
 
 pub struct PromptOutcome {
     pub inserted: String,
@@ -60,6 +120,24 @@ pub async fn run<R: Runtime>(
     };
     log::info!(
         "prompt mode → app={active_app} (override={manual_override_used})"
+    );
+
+    // Routing transparency: the destination is now resolved, so tell the overlay +
+    // main window where this recording is headed and how it's being treated. Fire-
+    // and-forget — a failed emit must never affect the actual rewrite/inject.
+    let route_host = browser_context
+        .as_ref()
+        .map(|c| host_from_url(&c.url))
+        .filter(|h| !h.is_empty());
+    let _ = app.emit(
+        EVENT_PROMPT_ROUTE,
+        PromptRoutePayload {
+            session,
+            app: active_app.clone(),
+            host: route_host.clone(),
+            branch: classify_branch(&active_app, route_host.as_deref()),
+            source: if manual_override_used { "manual" } else { "auto" },
+        },
     );
 
     let selected_text = if pm.include_selected_text {
@@ -141,5 +219,36 @@ fn first_chars(s: &str, n: usize) -> String {
     } else {
         let cut: String = trimmed.chars().take(n).collect();
         format!("{cut}…")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_branch, host_from_url};
+
+    #[test]
+    fn host_from_url_strips_scheme_path_port_and_www() {
+        assert_eq!(host_from_url("https://www.claude.ai/chat/abc"), "claude.ai");
+        assert_eq!(host_from_url("https://chatgpt.com:443/?q=1"), "chatgpt.com");
+        assert_eq!(host_from_url("http://user@docs.google.com/d/1#h"), "docs.google.com");
+        assert_eq!(host_from_url("not a url"), "not a url");
+        assert_eq!(host_from_url(""), "");
+    }
+
+    #[test]
+    fn classify_branch_routes_ai_hosts_and_apps_to_prompt() {
+        assert_eq!(classify_branch("Google Chrome", Some("claude.ai")), "prompt");
+        assert_eq!(classify_branch("Google Chrome", Some("chatgpt.com")), "prompt");
+        assert_eq!(classify_branch("Cursor", None), "prompt");
+        assert_eq!(classify_branch("Claude", None), "prompt");
+    }
+
+    #[test]
+    fn classify_branch_routes_everything_else_to_content() {
+        assert_eq!(classify_branch("Slack", None), "content");
+        assert_eq!(classify_branch("Google Chrome", Some("docs.google.com")), "content");
+        assert_eq!(classify_branch("Notes", None), "content");
+        // Host is the stronger signal: a non-AI tab in a browser is content.
+        assert_eq!(classify_branch("Safari", Some("github.com")), "content");
     }
 }
