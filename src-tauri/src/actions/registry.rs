@@ -238,6 +238,26 @@ fn migrate_known_actions<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
             ],
             include_str!("../../../default-actions/show_desktop.yaml"),
         ),
+        (
+            // Shipped with only the "search YouTube for" trigger, so the short
+            // "youtube <query>" form matched nothing (search_google had a bare
+            // "google" trigger; youtube/github didn't). Untouched copies get the
+            // bare triggers; user edits are preserved.
+            "search_youtube.yaml",
+            &[
+                "id: search_youtube\nname: \"Search YouTube\"\ndescription: \"Opens a YouTube search in the default browser\"\ntriggers:\n  - \"search YouTube for\"\ntype: open_url\ncommand: \"https://www.youtube.com/results?search_query={query}\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Searching YouTube for {query}\"\nfailure_feedback: \"Could not open browser\"\nenabled: true\n",
+            ],
+            include_str!("../../../default-actions/search_youtube.yaml"),
+        ),
+        (
+            // Same gap as YouTube: only "search GitHub for" shipped, so the short
+            // "github <query>" form matched nothing.
+            "search_github.yaml",
+            &[
+                "id: search_github\nname: \"Search GitHub\"\ndescription: \"Opens a GitHub repo search in the default browser\"\ntriggers:\n  - \"search GitHub for\"\ntype: open_url\ncommand: \"https://github.com/search?q={query}&type=repositories\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Searching GitHub for {query}\"\nfailure_feedback: \"Could not open browser\"\nenabled: true\n",
+            ],
+            include_str!("../../../default-actions/search_github.yaml"),
+        ),
     ];
 
     for (filename, past_defaults, current) in migrations {
@@ -245,15 +265,27 @@ fn migrate_known_actions<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
         let Ok(existing) = std::fs::read_to_string(&path) else {
             continue;
         };
-        if existing == *current {
-            continue; // already on the latest
-        }
-        if past_defaults.iter().any(|d| existing == *d) {
+        if let Some(new_body) = migration_target(&existing, past_defaults, current) {
             log::info!("migrating actions/{filename} to current template");
-            let _ = std::fs::write(&path, current);
+            let _ = std::fs::write(&path, new_body);
         }
     }
     Ok(())
+}
+
+/// Decide the migrated body for one action file. Returns `Some(current)` only
+/// when the user's copy is byte-identical to a prior shipped default (safe to
+/// upgrade); `None` when it's already current or the user has customised it
+/// (preserve their edit). Pure so the upgrade rule is unit-tested.
+fn migration_target<'a>(existing: &str, past_defaults: &[&str], current: &'a str) -> Option<&'a str> {
+    if existing == current {
+        return None; // already on the latest
+    }
+    if past_defaults.iter().any(|d| existing == *d) {
+        Some(current)
+    } else {
+        None // user-customised — leave it alone
+    }
 }
 
 #[cfg(test)]
@@ -294,6 +326,41 @@ mod tests {
 
     fn write(dir: &Path, name: &str, body: &str) {
         std::fs::write(dir.join(name), body).unwrap();
+    }
+
+    #[test]
+    fn migration_upgrades_untouched_prior_default_but_preserves_user_edits() {
+        let prior = "id: search_youtube\ntriggers:\n  - \"search YouTube for\"\n";
+        let current = "id: search_youtube\ntriggers:\n  - \"search YouTube for\"\n  - \"youtube\"\n";
+        // Untouched prior-default copy is upgraded.
+        assert_eq!(migration_target(prior, &[prior], current), Some(current));
+        // Already on the latest -> no-op (so we don't rewrite every launch).
+        assert_eq!(migration_target(current, &[prior], current), None);
+        // A user-customised copy is preserved, never clobbered.
+        let user_edit = "id: search_youtube\ntriggers:\n  - \"my custom trigger\"\n";
+        assert_eq!(migration_target(user_edit, &[prior], current), None);
+    }
+
+    #[test]
+    fn youtube_and_github_have_migration_entries_with_bare_triggers() {
+        // The shipped default now carries a bare trigger so the short form works,
+        // and existing installs are covered by a migration (regression guard for
+        // the YouTube/GitHub voice-action fix).
+        for (file, bare) in [
+            ("search_youtube.yaml", "\"youtube\""),
+            ("search_github.yaml", "\"github\""),
+        ] {
+            let repo_default = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("default-actions")
+                .join(file);
+            let body = std::fs::read_to_string(&repo_default).unwrap();
+            assert!(
+                body.contains(bare),
+                "{file} default should carry a bare {bare} trigger"
+            );
+        }
     }
 
     #[test]
