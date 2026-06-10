@@ -224,15 +224,27 @@ async fn call_anthropic(
 
         let body_text = res.text().await.unwrap_or_default();
 
-        // Retry once on 5xx per PRD §7.2.
+        // Retry once on 5xx per PRD §7.2. The body is provider/proxy-controlled
+        // text written to a persistent log, so mask any key-shaped token first.
         if status.is_server_error() && attempt < 2 {
-            log::warn!("Anthropic {} on attempt {attempt}: {body_text}", status);
+            log::warn!(
+                "Anthropic {status} on attempt {attempt}: {}",
+                crate::redact::redact_secrets(&body_text)
+            );
             tokio::time::sleep(Duration::from_millis(400)).await;
             continue;
         }
 
-        return Err(anyhow!("Anthropic HTTP {status}: {body_text}"));
+        return Err(anthropic_http_error(status, &body_text));
     }
+}
+
+/// Build the error for a non-success Anthropic response, masking any key-shaped
+/// secret in the provider body before it reaches the log/toast. The body is
+/// uncontrolled text and this error is re-logged and shown to the user, so it is
+/// the other escape route for `body_text` alongside the retry warning above.
+fn anthropic_http_error(status: reqwest::StatusCode, body: &str) -> anyhow::Error {
+    anyhow!("Anthropic HTTP {status}: {}", crate::redact::redact_secrets(body))
 }
 
 #[cfg(test)]
@@ -318,5 +330,16 @@ mod tests {
         assert_eq!(single_line("Google\nChrome"), "Google Chrome");
         assert_eq!(single_line("  Slack \t\r\n "), "Slack");
         assert_eq!(single_line("Cursor"), "Cursor");
+    }
+
+    #[test]
+    fn anthropic_http_error_masks_secret_in_body() {
+        let body = "{\"error\":\"bad key sk-ant-api03-ABCDEFGHIJKLMNOP\"}";
+        let err = anthropic_http_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, body);
+        let msg = err.to_string();
+        assert!(msg.contains("sk-ant-***"), "secret not masked: {msg}");
+        assert!(!msg.contains("ABCDEFGHIJKLMNOP"), "secret tail leaked: {msg}");
+        // Status stays readable so the error is still useful for debugging.
+        assert!(msg.contains("HTTP 500"), "status lost: {msg}");
     }
 }

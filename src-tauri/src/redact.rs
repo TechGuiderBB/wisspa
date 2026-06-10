@@ -10,6 +10,13 @@
 //! A user can opt in to verbose logging (Settings) to capture a hard bug; then
 //! `redact()` returns the content debug-escaped (quoted and escaped via `{:?}`),
 //! which keeps log lines single-line and avoids raw control characters. Off by default.
+//!
+//! `redact_secrets()` is a separate, narrower masker for *uncontrolled text* that
+//! may carry an API-key-shaped token (e.g. a provider HTTP error body before it is
+//! logged or surfaced in an error). Unlike `redact()` it preserves the surrounding
+//! text so the error stays debuggable, masking only key-shaped runs to
+//! `sk-ant-***` / `gsk_***` / `sk-***`. It **always** masks, ignoring the verbose
+//! flag — verbose is an opt-in for the user's own *content*, never for credentials.
 
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,9 +53,69 @@ fn redact_with(s: &str, verbose: bool) -> String {
     format!("<redacted chars={} sha256={short}>", s.chars().count())
 }
 
+/// Key-like prefixes to mask, in most-specific-first order so `sk-ant-…` is
+/// caught by the `sk-ant-` branch before the broader `sk-` branch. A run is
+/// masked only when its tail (after the prefix) is at least this many chars,
+/// which avoids masking short hyphenated words like `sk-foo` or the bare
+/// literal `sk-ant-`.
+const SECRET_PREFIXES: [&str; 3] = ["sk-ant-", "gsk_", "sk-"];
+const MIN_SECRET_TAIL: usize = 8;
+
+fn is_key_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '-'
+}
+
+/// Mask API-key-shaped tokens in otherwise-untrusted text (e.g. a provider HTTP
+/// error body) before it reaches the persistent log or an error surfaced to the
+/// user. Splits the input into maximal runs of key characters (`[A-Za-z0-9_-]`);
+/// every other character is copied through verbatim so surrounding text and
+/// structure (quotes, braces, colons, newlines) are preserved and the message
+/// stays debuggable. A run beginning with `sk-ant-`, `gsk_` or `sk-` (with an
+/// 8+ char tail) is replaced by `<prefix>***`.
+///
+/// Always masks regardless of the verbose flag — verbose logging opts in for the
+/// user's own content, never for credentials. Idempotent: because `*` is not a
+/// key character, an already-masked `sk-ant-***` re-scans as the run `sk-ant-`
+/// (zero-length tail) and is left unchanged. Errs toward masking: a rare
+/// unrelated `sk-`/`gsk_`-prefixed identifier in an error body may be masked too,
+/// which is the safe default for a log file.
+pub fn redact_secrets(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut run = String::new();
+    for c in s.chars() {
+        if is_key_char(c) {
+            run.push(c);
+        } else {
+            flush_run(&mut run, &mut out);
+            out.push(c);
+        }
+    }
+    flush_run(&mut run, &mut out);
+    out
+}
+
+/// Append `run` to `out`, masked if it is key-shaped, then clear it.
+fn flush_run(run: &mut String, out: &mut String) {
+    if run.is_empty() {
+        return;
+    }
+    for prefix in SECRET_PREFIXES {
+        if let Some(tail) = run.strip_prefix(prefix) {
+            if tail.chars().count() >= MIN_SECRET_TAIL {
+                out.push_str(prefix);
+                out.push_str("***");
+                run.clear();
+                return;
+            }
+        }
+    }
+    out.push_str(run);
+    run.clear();
+}
+
 #[cfg(test)]
 mod tests {
-    use super::redact_with;
+    use super::{redact_secrets, redact_with, set_verbose};
 
     #[test]
     fn redacted_summary_does_not_leak_content() {
@@ -100,5 +167,52 @@ mod tests {
     fn verbose_returns_content_verbatim() {
         let out = redact_with("hello world", true);
         assert!(out.contains("hello world"));
+    }
+
+    #[test]
+    fn redact_secrets_masks_anthropic_key() {
+        let out = redact_secrets("x-api-key: sk-ant-api03-ABCDEFGHIJKLMNOP and done");
+        assert!(out.contains("sk-ant-***"), "got: {out}");
+        assert!(!out.contains("ABCDEFGHIJKLMNOP"), "tail leaked: {out}");
+        // Surrounding text preserved so the error stays debuggable.
+        assert!(out.contains("x-api-key"), "prefix text lost: {out}");
+        assert!(out.contains("and done"), "trailing text lost: {out}");
+    }
+
+    #[test]
+    fn redact_secrets_masks_groq_and_generic() {
+        let groq = redact_secrets("gsk_ABCDEFGHIJKLMNOP");
+        assert!(groq.contains("gsk_***"), "got: {groq}");
+        assert!(!groq.contains("ABCDEFGHIJKLMNOP"), "tail leaked: {groq}");
+
+        let generic = redact_secrets("sk-ABCDEFGHIJKLMNOP");
+        assert!(generic.contains("sk-***"), "got: {generic}");
+        assert!(!generic.contains("ABCDEFGHIJKLMNOP"), "tail leaked: {generic}");
+    }
+
+    #[test]
+    fn redact_secrets_is_idempotent() {
+        let once = redact_secrets("bad key sk-ant-api03-ABCDEFGHIJKLMNOP here");
+        let twice = redact_secrets(&once);
+        assert_eq!(once, twice, "masking must be stable: {once} != {twice}");
+        assert!(once.contains("sk-ant-***"));
+    }
+
+    #[test]
+    fn redact_secrets_leaves_plain_text_untouched() {
+        let plain = "the quick brown fox, task-force, skull";
+        assert_eq!(redact_secrets(plain), plain);
+    }
+
+    #[test]
+    fn redact_secrets_ignores_verbose() {
+        // Credentials must stay masked even when the user opts into verbose
+        // logging — verbose is for their own content, never for secrets.
+        set_verbose(true);
+        let out = redact_secrets("sk-ant-api03-ABCDEFGHIJKLMNOP");
+        // Reset before asserting so a failure can't leak the flag into other tests.
+        set_verbose(false);
+        assert!(out.contains("sk-ant-***"), "got: {out}");
+        assert!(!out.contains("ABCDEFGHIJKLMNOP"), "tail leaked under verbose: {out}");
     }
 }
