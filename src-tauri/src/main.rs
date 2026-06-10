@@ -135,7 +135,7 @@ impl AppState {
         self.groq_api_key.read().map(|g| g.clone()).unwrap_or_default()
     }
     pub fn anthropic_key(&self) -> String {
-        self.anthropic_api_key.read().map(|g| g.clone()).unwrap_or_default()
+        self.anthropic_api_key.read().map(|g| g.trim().to_string()).unwrap_or_default()
     }
     pub fn set_groq_key(&self, v: String) {
         if let Ok(mut g) = self.groq_api_key.write() {
