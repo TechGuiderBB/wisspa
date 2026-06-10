@@ -56,10 +56,9 @@ When something comes up that's "v1 polish or pre-launch decision", add it below 
 
 ## 4. `show_desktop` default action ships broken
 
-**Where:** `default-actions/show_desktop.yaml` ships with `command: "fn+f11"`. `src-tauri/src/actions/executor.rs::combo_to_applescript` rejects the `fn` modifier with `"fn modifier is not supported by AppleScript keystroke"`, so the action errors when triggered.
-**Two fixes possible:**
-- Change the default keystroke to one that doesn't need `fn` (e.g. `cmd+f3` on some keyboard layouts triggers Show Desktop — but layout-dependent), or wire it as an `applescript` action calling Mission Control directly.
-- Extend `combo_to_applescript` / `enigo`-based keystroke to support `fn` via `CGEventKeyboardSetUnicodeString` or similar.
-**Why bother:** Default actions are the first thing users try after install. A 14-action list with one obviously broken default reads as low quality.
+**Status:** Fixed. `default-actions/show_desktop.yaml` is now an `applescript` action (`command: 'tell application "System Events" to key code 103'`) — off the `combo_to_applescript` path entirely, so the old `fn` rejection can no longer apply. Both historical keystroke defaults (`fn+f11`, then `f11`) are migrated to the applescript form on launch for untouched copies; user edits are preserved (`src-tauri/src/actions/registry.rs::migrate_known_actions`).
+
+**Original report:** `default-actions/show_desktop.yaml` shipped with `command: "fn+f11"`. `src-tauri/src/actions/executor.rs::combo_to_applescript` rejects the `fn` modifier with `"fn modifier is not supported by AppleScript keystroke"`, so the action errored when triggered.
+**Why it mattered:** Default actions are the first thing users try after install. A 14-action list with one obviously broken default reads as low quality.
 
 
