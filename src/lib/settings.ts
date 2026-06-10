@@ -9,6 +9,30 @@ export type VocabEntry = {
   replace_with: string;
 };
 
+export type VocabImportSkip = {
+  line: number;
+  reason: string;
+};
+
+export type VocabImport = {
+  to_add: VocabEntry[];
+  skipped: VocabImportSkip[];
+  already_existing: number;
+};
+
+/**
+ * Parse a `spoken,replacement` CSV (header optional) into an import preview.
+ * Passes `csv_text` explicitly in snake_case so the Rust↔JS contract is visible
+ * at the call site and does not rely on Tauri's implicit camelCase→snake_case
+ * argument conversion (aligns with `reportRecordingTimeout`).
+ */
+export async function importVocabularyCsv(
+  csvText: string,
+  existing: VocabEntry[],
+): Promise<VocabImport> {
+  return await invoke<VocabImport>("import_vocabulary_csv", { csv_text: csvText, existing });
+}
+
 export const SENSITIVITY_MULTIPLIER: Record<MicSensitivity, number> = {
   off: 0, // 0 == disable silence guard entirely (sentinel value)
   low: 0.5,
