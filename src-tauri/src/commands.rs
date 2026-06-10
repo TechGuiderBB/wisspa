@@ -253,6 +253,23 @@ pub fn list_actions() -> Vec<crate::actions::Action> {
     registry::snapshot()
 }
 
+/// Insert the (possibly edited) reviewed prompt: resolve the backend wait for
+/// this recording so `prompt_mode::run` pastes `text`. A stale/superseded
+/// session has no pending review, so this is a harmless no-op (still `Ok`).
+#[tauri::command]
+pub fn submit_prompt_review(session: u64, text: String) -> Result<(), String> {
+    crate::prompt_review::resolve(session, crate::prompt_review::ReviewDecision::Insert(text));
+    Ok(())
+}
+
+/// Cancel the reviewed prompt: resolve the backend wait with Cancel so nothing
+/// is pasted. No-op for a stale/superseded session.
+#[tauri::command]
+pub fn cancel_prompt_review(session: u64) -> Result<(), String> {
+    crate::prompt_review::resolve(session, crate::prompt_review::ReviewDecision::Cancel);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn process_audio<R: Runtime>(
     app: AppHandle<R>,

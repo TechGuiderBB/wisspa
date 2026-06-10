@@ -32,14 +32,32 @@ export default function PromptModeTab({ settings, patch }: Props) {
         />
       </Row>
 
-      <Row label="Show preview before insert">
+      <Row
+        label="Review and edit before insert"
+        hint="Opens an editable window with the generated prompt; nothing is pasted until you approve."
+      >
+        <Toggle
+          checked={p.review_before_insert}
+          onChange={(v) => patch({ review_before_insert: v })}
+        />
+      </Row>
+
+      <Row
+        label="Show preview before insert"
+        hint={
+          p.review_before_insert
+            ? "Superseded while review is on — the editable window replaces the timed preview."
+            : undefined
+        }
+      >
         <Toggle
           checked={p.show_preview}
+          disabled={p.review_before_insert}
           onChange={(v) => patch({ show_preview: v })}
         />
       </Row>
 
-      {p.show_preview && (
+      {p.show_preview && !p.review_before_insert && (
         <Row label="Preview timeout">
           <Slider
             value={p.preview_timeout_seconds}
