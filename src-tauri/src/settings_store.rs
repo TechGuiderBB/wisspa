@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager, Runtime};
 
 const SETTINGS_FILE: &str = "settings.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VocabEntry {
     pub spoken: String,
     pub replace_with: String,

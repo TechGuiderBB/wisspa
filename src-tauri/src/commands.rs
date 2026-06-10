@@ -716,3 +716,15 @@ fn diagnostics_summary<R: Runtime>(app: &AppHandle<R>) -> String {
         settings.hotkeys.cancel,
     )
 }
+
+/// Parse a `spoken,replacement` CSV (header optional) and return a preview of
+/// which terms would be added, which already exist, and which rows were skipped.
+/// Pure: no disk I/O and no persistence — the frontend owns the in-memory vocab
+/// and persists confirmed additions through the existing `save_settings` path.
+#[tauri::command]
+pub fn import_vocabulary_csv(
+    csv_text: String,
+    existing: Vec<settings_store::VocabEntry>,
+) -> Result<crate::vocab_import::VocabImport, String> {
+    Ok(crate::vocab_import::compute_vocab_import(&csv_text, &existing))
+}
