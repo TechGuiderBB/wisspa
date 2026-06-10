@@ -104,3 +104,83 @@ pub fn schedule_timeout<R: Runtime>(app: AppHandle<R>, id: u64) {
         }
     });
 }
+
+/// Clear the global pending slot. The `SLOT`/`NEXT_ID` statics are process-wide,
+/// so cross-module tests that drive `execute()` must reset residue here before
+/// asserting. Exposes only the clear, never the private `take_if`.
+#[cfg(test)]
+pub(crate) fn reset_for_test() {
+    let _ = take_if(None);
+}
+
+/// Process-wide serialization gate for any test that touches the global
+/// `SLOT`/`NEXT_ID`. Shared across modules — `executor`'s suppression tests
+/// lock this same static so the slot can't interleave under parallel
+/// `cargo test`. A single gate (not one-per-module) is what makes that safe.
+#[cfg(test)]
+pub(crate) static TEST_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::actions::ActionType;
+
+    fn action(id: &str) -> Action {
+        Action {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: String::new(),
+            triggers: Vec::new(),
+            action_type: ActionType::Shell,
+            command: "true".to_string(),
+            working_dir: None,
+            requires_permissions: Vec::new(),
+            destructive: true,
+            success_feedback: String::new(),
+            failure_feedback: String::new(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn store_then_take_returns_the_action() {
+        let _g = TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = take_if(None);
+
+        store(action("a"), "cmd-a".to_string(), "say a".to_string());
+        let taken = take_if(None).expect("pending should be retrievable");
+        assert_eq!(taken.0.id, "a");
+        assert_eq!(taken.1, "cmd-a");
+        assert_eq!(taken.2, "say a");
+        // Slot is now empty — a second take yields nothing.
+        assert!(take_if(None).is_none());
+    }
+
+    #[test]
+    fn newer_destructive_supersedes_older() {
+        let _g = TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = take_if(None);
+
+        let id1 = store(action("a"), "cmd-a".to_string(), "say a".to_string());
+        let _id2 = store(action("b"), "cmd-b".to_string(), "say b".to_string());
+        // The superseded id1 can no longer be confirmed.
+        assert!(take_if(Some(id1)).is_none());
+        // The live pending is the newer 'b'.
+        let taken = take_if(None).expect("newer pending should remain");
+        assert_eq!(taken.0.id, "b");
+    }
+
+    #[test]
+    fn stale_timeout_does_not_clear_newer_pending() {
+        let _g = TEST_GATE.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = take_if(None);
+
+        let id1 = store(action("a"), "cmd-a".to_string(), "say a".to_string());
+        let _id2 = store(action("b"), "cmd-b".to_string(), "say b".to_string());
+        // Simulate the original timer firing after supersession: id-guarded
+        // take is a no-op and must NOT evict the live 'b'.
+        assert!(take_if(Some(id1)).is_none());
+        let taken = take_if(None).expect("newer pending survives stale timeout");
+        assert_eq!(taken.0.id, "b");
+    }
+}
