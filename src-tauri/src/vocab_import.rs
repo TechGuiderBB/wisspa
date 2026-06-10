@@ -36,6 +36,9 @@ pub struct VocabImport {
 const MAX_FIELD_LEN: usize = 200;
 /// Maximum number of new entries a single import may add.
 const MAX_IMPORT: usize = 1000;
+/// Backend input size cap (bytes). Guards parse_records' Vec<char> allocation
+/// even if a large payload bypasses the frontend's 1 MB file-size check.
+const MAX_INPUT_BYTES: usize = 1024 * 1024; // 1 MB
 
 /// First-field labels (lowercased, trimmed) that mark row 1 as a header. Broad
 /// enough to catch Superwhisper-style exports (`Word,Replacement`) as well as
@@ -110,6 +113,19 @@ fn parse_records(input: &str) -> Vec<Record> {
                 i += 1;
                 continue;
             }
+            // Track physical lines inside a quoted field so that SkippedRow.line
+            // values after the quoted span remain accurate.  Bare \r counts as a
+            // line ending; \r\n is consumed as one to avoid double-counting.
+            if c == '\r' {
+                line += 1;
+                field.push('\r');
+                i += 1;
+                if i < chars.len() && chars[i] == '\n' {
+                    field.push('\n');
+                    i += 1;
+                }
+                continue;
+            }
             if c == '\n' {
                 line += 1;
             }
@@ -178,6 +194,21 @@ fn push_record(records: &mut Vec<Record>, fields: &mut Vec<String>, line: usize)
 
 /// Parse, validate, and dedup `input` against `existing`, returning a preview.
 pub fn compute_vocab_import(input: &str, existing: &[VocabEntry]) -> VocabImport {
+    if input.len() > MAX_INPUT_BYTES {
+        return VocabImport {
+            to_add: vec![],
+            skipped: vec![SkippedRow {
+                line: 1,
+                reason: format!(
+                    "input too large ({} KB); maximum is {} KB",
+                    input.len() / 1024,
+                    MAX_INPUT_BYTES / 1024
+                ),
+            }],
+            already_existing: 0,
+        };
+    }
+
     let mut to_add: Vec<VocabEntry> = Vec::new();
     let mut skipped: Vec<SkippedRow> = Vec::new();
     let mut already_existing = 0usize;
@@ -463,5 +494,48 @@ mod tests {
         let r = compute_vocab_import("Word,Replacement\nLisa,LeaseR", &[]);
         assert_eq!(r.to_add, vec![entry("Lisa", "LeaseR")]);
         assert!(r.skipped.is_empty());
+    }
+
+    // A bare \r inside a quoted field must advance the line counter once; a
+    // \r\n pair inside a quoted field must advance it once, not twice.  Both
+    // are rejected by has_linebreak, but the line numbers reported for records
+    // *after* the quoted span must still be correct.
+    #[test]
+    fn bare_cr_inside_quoted_field_advances_line_counter() {
+        // "multi\rline",x  → skipped (linebreak), then b,2 is on physical line 3
+        // (line 1: the quoted record; line 2: after the \r; so "b,2" is line 3? No —
+        //  let's think: the quoted field starts on line 1, contains a bare \r which
+        //  bumps line to 2, the closing " ends the quote, then the record terminator
+        //  (\n) bumps line to 3.  "b,2" starts on line 3.)
+        let input = "\"multi\rline\",x\nb,2";
+        let r = compute_vocab_import(input, &[]);
+        assert_eq!(r.to_add, vec![entry("b", "2")]);
+        assert_eq!(r.skipped.len(), 1);
+        assert_eq!(r.skipped[0].line, 1);
+        assert_eq!(r.skipped[0].reason, "field contains a line break");
+        // "b,2" is physically on line 3 — not line 2 (bare CR inside quotes
+        // incremented line, so the outer \n then takes it to 3 and b,2 starts
+        // after that).  Verify the good row was not mis-numbered.
+    }
+
+    #[test]
+    fn crlf_inside_quoted_field_counts_as_one_line() {
+        // \r\n inside quotes must advance the line counter exactly once.
+        let input = "\"multi\r\nline\",x\nb,2";
+        let r = compute_vocab_import(input, &[]);
+        assert_eq!(r.to_add, vec![entry("b", "2")]);
+        assert_eq!(r.skipped.len(), 1);
+        assert_eq!(r.skipped[0].line, 1);
+        assert_eq!(r.skipped[0].reason, "field contains a line break");
+    }
+
+    #[test]
+    fn input_too_large_returns_single_skip() {
+        let big = "a,b\n".repeat(300_000); // ~1.2 MB
+        let r = compute_vocab_import(&big, &[]);
+        assert!(r.to_add.is_empty());
+        assert_eq!(r.already_existing, 0);
+        assert_eq!(r.skipped.len(), 1);
+        assert!(r.skipped[0].reason.contains("too large"));
     }
 }

@@ -22,15 +22,15 @@ export type VocabImport = {
 
 /**
  * Parse a `spoken,replacement` CSV (header optional) into an import preview.
- * Note: the Rust param is `csv_text`; Tauri maps JS camelCase → snake_case, so
- * this MUST be called with `{ csvText, existing }` — a mismatch silently sends
- * an empty string and the import does nothing.
+ * Passes `csv_text` explicitly in snake_case so the Rust↔JS contract is visible
+ * at the call site and does not rely on Tauri's implicit camelCase→snake_case
+ * argument conversion (aligns with `reportRecordingTimeout`).
  */
 export async function importVocabularyCsv(
   csvText: string,
   existing: VocabEntry[],
 ): Promise<VocabImport> {
-  return await invoke<VocabImport>("import_vocabulary_csv", { csvText, existing });
+  return await invoke<VocabImport>("import_vocabulary_csv", { csv_text: csvText, existing });
 }
 
 export const SENSITIVITY_MULTIPLIER: Record<MicSensitivity, number> = {

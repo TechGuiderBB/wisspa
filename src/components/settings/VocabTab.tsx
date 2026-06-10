@@ -42,6 +42,9 @@ export default function VocabTab({ settings, onUpdate }: Props) {
     setImportError(null);
     setPreview(null);
     try {
+      if (file.size > 1_048_576) {
+        throw new Error("File is too large (max 1 MB). Please trim the CSV and try again.");
+      }
       const text = await file.text();
       const result = await importVocabularyCsv(text, vocab);
       setPreview(result);
