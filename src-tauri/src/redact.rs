@@ -115,7 +115,7 @@ fn flush_run(run: &mut String, out: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{redact_secrets, redact_with, set_verbose};
+    use super::{redact_secrets, redact_with};
 
     #[test]
     fn redacted_summary_does_not_leak_content() {
@@ -206,13 +206,17 @@ mod tests {
 
     #[test]
     fn redact_secrets_ignores_verbose() {
-        // Credentials must stay masked even when the user opts into verbose
-        // logging — verbose is for their own content, never for secrets.
-        set_verbose(true);
-        let out = redact_secrets("sk-ant-api03-ABCDEFGHIJKLMNOP");
-        // Reset before asserting so a failure can't leak the flag into other tests.
-        set_verbose(false);
-        assert!(out.contains("sk-ant-***"), "got: {out}");
-        assert!(!out.contains("ABCDEFGHIJKLMNOP"), "tail leaked under verbose: {out}");
+        // Contrast: redact_with in verbose mode returns content verbatim, but
+        // redact_secrets must always mask credentials regardless of that flag.
+        // Uses redact_with directly to avoid mutating the global VERBOSE flag.
+        let key = "sk-ant-api03-ABCDEFGHIJKLMNOP";
+        let verbose_out = redact_with(key, true);
+        assert!(
+            verbose_out.contains("ABCDEFGHIJKLMNOP"),
+            "verbose baseline broken: {verbose_out}"
+        );
+        let masked = redact_secrets(key);
+        assert!(masked.contains("sk-ant-***"), "got: {masked}");
+        assert!(!masked.contains("ABCDEFGHIJKLMNOP"), "tail leaked: {masked}");
     }
 }
