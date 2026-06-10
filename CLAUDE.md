@@ -264,7 +264,7 @@ No automated test suite in the Rust code as of this snapshot. CI runs:
 5. **Hotkey reassignment temporarily unregisters all global shortcuts during capture** so the webview can receive the raw key event. Press `Esc` to cancel cleanly if you abort.
 6. **The pill follows the primary monitor.** Multi-display users should set their preferred display as primary in System Settings → Displays → Arrange.
 7. **`enigo` aborts the host process on macOS.** If you're tempted to switch `Cmd+V` injection back to `enigo` — don't. The abort bypasses `catch_unwind`. AppleScript via `osascript` is the macOS-blessed path.
-8. **`show_desktop` default action ships broken.** It uses `fn+f11` but the AppleScript keystroke layer rejects the `fn` modifier (`actions/executor.rs::combo_to_applescript`). Tracked in `docs/v1-backlog.md`.
+8. **`show_desktop` default action is an `applescript` action**, not a keystroke. It runs `tell application "System Events" to key code 103` (the Show Desktop system event), keeping it off the `combo_to_applescript` path whose `fn`-modifier rejection broke the original `fn+f11` keystroke default. Installs on either prior keystroke default are migrated on launch (`actions/registry.rs::migrate_known_actions`); user edits are preserved. Resolved item in `docs/v1-backlog.md`.
 
 ---
 
