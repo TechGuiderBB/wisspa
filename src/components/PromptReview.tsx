@@ -30,6 +30,10 @@ export default function PromptReview() {
   // backend is idempotent, but this keeps the UI honest.
   const [submitting, setSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Stale-event guard: mirrors RecordingOverlay's session discipline. Tracks the
+  // latest session from start-recording so review-open events from superseded
+  // recordings are silently dropped instead of overwriting in-progress edits.
+  const sessionRef = useRef(0);
 
   useEffect(() => {
     // Cancellation-safe subscription (mirrors RecordingOverlay): React 18
@@ -45,6 +49,9 @@ export default function PromptReview() {
     listen<ReviewOpen>(REVIEW_OPEN_EVENT, (e) => {
       const p = e.payload;
       if (!p) return;
+      // Session guard: drop stale events from superseded recordings (session 0
+      // is a legacy passthrough kept for compatibility with older backend builds).
+      if (p.session !== 0 && p.session !== sessionRef.current) return;
       setSession(p.session);
       setText(p.text ?? "");
       setAppLabel(p.app ?? "");
@@ -62,13 +69,17 @@ export default function PromptReview() {
     }).then(track);
 
     // The backend hides this window on abort, but clear stale text too so a
-    // flashed reopen never shows the previous recording's prompt.
+    // flashed reopen never shows the previous recording's prompt. Also advance
+    // sessionRef so the review-open guard can reject events from prior sessions.
     const reset = () => {
       setSession(0);
       setText("");
       setSubmitting(false);
     };
-    listen(START_EVENT, reset).then(track);
+    listen<{ session: number }>(START_EVENT, (e) => {
+      sessionRef.current = e.payload?.session ?? 0;
+      reset();
+    }).then(track);
     listen(CANCEL_EVENT, reset).then(track);
 
     return () => {

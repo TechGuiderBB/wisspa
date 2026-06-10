@@ -116,15 +116,13 @@ pub fn decision_to_text(decision: ReviewDecision) -> Result<String> {
 /// Resolve which app to bring forward before pasting the reviewed prompt.
 ///
 /// The review window steals focus while open, so after hiding it we must
-/// re-activate the user's real target. Precedence: the pipeline's inject target
-/// (the press-time auto-detected app) wins; otherwise — manual-override mode,
-/// where there is no app to activate — fall back to the real frontmost process
-/// captured at hotkey press. When neither is known, return `None` (today's
-/// behaviour: paste into whatever is frontmost, no regression).
-pub fn review_focus_target(inject_target: Option<&str>, press_app: Option<&str>) -> Option<String> {
-    inject_target
-        .map(str::to_string)
-        .or_else(|| press_app.map(str::to_string))
+/// re-activate the user's real target. Only the pipeline's inject target
+/// (the press-time auto-detected app in auto mode) is used. In manual-override
+/// mode `inject_target` is `None` — we return `None` so no activation is
+/// attempted, matching the non-review override path and avoiding hard activation
+/// errors that would discard the user's edited text.
+pub fn review_focus_target(inject_target: Option<&str>, _press_app: Option<&str>) -> Option<String> {
+    inject_target.map(str::to_string)
 }
 
 #[cfg(test)]
@@ -158,12 +156,11 @@ mod tests {
     }
 
     #[test]
-    fn focus_target_falls_back_to_press_app_in_override_mode() {
-        // Manual override → inject_target is None → use the real press-time app.
-        assert_eq!(
-            review_focus_target(None, Some("Slack")),
-            Some("Slack".to_string())
-        );
+    fn focus_target_is_none_in_override_mode() {
+        // Manual override → inject_target is None → return None so no activation
+        // is attempted (matches non-review override path; avoids hard activation
+        // errors that would discard the user's edited text).
+        assert_eq!(review_focus_target(None, Some("Slack")), None);
     }
 
     #[test]
