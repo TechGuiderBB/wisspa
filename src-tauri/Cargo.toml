@@ -53,6 +53,13 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSPasteboardItem"] }
 objc2-foundation = { version = "0.3", features = ["NSData", "NSArray", "NSString"] }
 
+[dev-dependencies]
+# `test` feature enables tauri::test::mock_app() / MockRuntime, used by the
+# executor unit tests to drive execute()/run_confirmed() without a real
+# window or macOS permissions. This is a dev-dependency: it is compiled only
+# for test builds and has no effect on the release binary.
+tauri = { version = "2", features = ["test"] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

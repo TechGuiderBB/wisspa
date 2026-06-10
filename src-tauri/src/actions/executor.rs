@@ -274,6 +274,26 @@ pub struct ExecOutcome {
     pub message: String,
 }
 
+/// Routing decision for a matched action. Destructive actions MUST be staged
+/// for tray confirmation and never dispatched directly from `execute`; this is
+/// the single source of truth for the gate so the decision is testable in
+/// isolation and `execute` cannot drift from it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Route {
+    Run,
+    Confirm,
+}
+
+/// Decide whether an action runs immediately or is staged for confirmation.
+/// Keys solely on `destructive` — independent of `action_type`.
+pub(crate) fn route(action: &Action) -> Route {
+    if action.destructive {
+        Route::Confirm
+    } else {
+        Route::Run
+    }
+}
+
 pub async fn execute<R: Runtime>(
     app: &AppHandle<R>,
     action: &Action,
@@ -289,26 +309,29 @@ pub async fn execute<R: Runtime>(
         return Ok(outcome);
     }
 
-    if action.destructive {
-        let id = crate::actions::pending::store(
-            action.clone(),
-            resolved.clone(),
-            query.to_string(),
-        );
-        crate::tray::set_pending_confirmation(app, Some(&action.name));
-        crate::actions::pending::schedule_timeout(app.clone(), id);
-        return Ok(ExecOutcome {
-            success: false,
-            message: format!(
-                "Confirm \"{}\" via the Wisspa tray menu within {}s.",
-                action.name,
-                crate::actions::pending::CONFIRMATION_TIMEOUT.as_secs()
-            ),
-        });
+    match route(action) {
+        Route::Confirm => {
+            let id = crate::actions::pending::store(
+                action.clone(),
+                resolved.clone(),
+                query.to_string(),
+            );
+            crate::tray::set_pending_confirmation(app, Some(&action.name));
+            crate::actions::pending::schedule_timeout(app.clone(), id);
+            Ok(ExecOutcome {
+                success: false,
+                message: format!(
+                    "Confirm \"{}\" via the Wisspa tray menu within {}s.",
+                    action.name,
+                    crate::actions::pending::CONFIRMATION_TIMEOUT.as_secs()
+                ),
+            })
+        }
+        Route::Run => {
+            let env = settings_env(app);
+            Ok(dispatch(action, &resolved, query, &env).await)
+        }
     }
-
-    let env = settings_env(app);
-    Ok(dispatch(action, &resolved, query, &env).await)
 }
 
 /// Dispatch a pre-confirmed action. Skips the destructive gate (the user
@@ -599,10 +622,139 @@ fn dirs_home() -> Option<std::path::PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::check_shell;
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn rejected(cmd: &str) -> bool {
         check_shell(cmd).is_err()
+    }
+
+    /// Build a minimal action with every field populated. `command`/`destructive`
+    /// vary per test; the rest are inert defaults.
+    fn action(destructive: bool, action_type: ActionType, command: &str) -> Action {
+        Action {
+            id: "test".to_string(),
+            name: "Test Action".to_string(),
+            description: String::new(),
+            triggers: Vec::new(),
+            action_type,
+            command: command.to_string(),
+            working_dir: None,
+            requires_permissions: Vec::new(),
+            destructive,
+            success_feedback: "done".to_string(),
+            failure_feedback: "failed".to_string(),
+            enabled: true,
+        }
+    }
+
+    /// Unique, non-wall-clock sentinel path under the temp dir. Uniqueness comes
+    /// from pid + a process-local counter — never `Instant`/`Date` (banned and
+    /// flaky). The path holds no `{`/`}` so `resolve_placeholders_shell` passes
+    /// the command through verbatim (no clipboard read).
+    fn sentinel_path(tag: &str) -> std::path::PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!("wisspa-exec-test-{}-{tag}-{n}", std::process::id()))
+    }
+
+    // ---- Decision seam (supporting; NOT the suppression proof) -------------
+
+    #[test]
+    fn route_confirms_every_destructive_action() {
+        for ty in [
+            ActionType::Shell,
+            ActionType::Applescript,
+            ActionType::OpenUrl,
+            ActionType::OpenApp,
+            ActionType::Keystroke,
+        ] {
+            let a = action(true, ty, "");
+            assert_eq!(route(&a), Route::Confirm, "destructive {ty:?} must confirm");
+        }
+    }
+
+    #[test]
+    fn route_runs_non_destructive_actions() {
+        for ty in [
+            ActionType::Shell,
+            ActionType::Applescript,
+            ActionType::OpenUrl,
+            ActionType::OpenApp,
+            ActionType::Keystroke,
+        ] {
+            let a = action(false, ty, "");
+            assert_eq!(route(&a), Route::Run, "non-destructive {ty:?} must run");
+        }
+    }
+
+    // ---- Suppression proof at the execute() boundary (REQUIRED) ------------
+
+    /// THE security property: a destructive action's side effect does not occur
+    /// until the user confirms. Drives the live `execute()` against a mock
+    /// runtime and a sentinel file, then proves the side effect appears only
+    /// after `run_confirmed()`.
+    #[tokio::test]
+    async fn destructive_action_is_staged_not_run_then_runs_on_confirm() {
+        let _g = crate::actions::pending::TEST_GATE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::actions::pending::reset_for_test();
+
+        let app = tauri::test::mock_app();
+        let h = app.handle().clone();
+        let sentinel = sentinel_path("destructive");
+        let _ = std::fs::remove_file(&sentinel);
+        let cmd = format!("touch {}", sentinel.display());
+        let act = action(true, ActionType::Shell, &cmd);
+
+        let out = execute(&h, &act, "").await.unwrap();
+        let timeout_token = format!(
+            "{}s",
+            crate::actions::pending::CONFIRMATION_TIMEOUT.as_secs()
+        );
+        assert!(!out.success, "destructive action must not report success on trigger");
+        assert!(
+            out.message.contains(&timeout_token),
+            "stage message must contain the timeout token \"{}\": {}",
+            timeout_token,
+            out.message
+        );
+        assert!(
+            !sentinel.exists(),
+            "SECURITY: destructive side effect ran before confirmation"
+        );
+
+        // No placeholders in `cmd`, so the resolved command equals the template.
+        let out2 = run_confirmed(&h, &act, &cmd, "").await;
+        assert!(out2.success, "confirmed run failed: {}", out2.message);
+        assert!(sentinel.exists(), "confirmed destructive action did not run");
+
+        let _ = std::fs::remove_file(&sentinel);
+        crate::actions::pending::reset_for_test();
+    }
+
+    /// Non-destructive actions still run immediately at the real boundary —
+    /// the gate must not regress the common path.
+    #[tokio::test]
+    async fn non_destructive_action_runs_immediately() {
+        let _g = crate::actions::pending::TEST_GATE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        crate::actions::pending::reset_for_test();
+
+        let app = tauri::test::mock_app();
+        let h = app.handle().clone();
+        let sentinel = sentinel_path("plain");
+        let _ = std::fs::remove_file(&sentinel);
+        let cmd = format!("touch {}", sentinel.display());
+        let act = action(false, ActionType::Shell, &cmd);
+
+        let out = execute(&h, &act, "").await.unwrap();
+        assert!(out.success, "non-destructive run failed: {}", out.message);
+        assert!(sentinel.exists(), "non-destructive action should run immediately");
+
+        let _ = std::fs::remove_file(&sentinel);
     }
 
     #[test]
