@@ -17,6 +17,7 @@ mod logging;
 mod modes;
 mod permissions;
 mod prearm;
+mod prompt_review;
 mod redact;
 mod selection;
 mod session;
@@ -25,6 +26,7 @@ mod sounds;
 mod stt;
 mod toast;
 mod tray;
+mod vocab_import;
 
 use std::path::PathBuf;
 use tauri::{Listener, LogicalPosition};
@@ -134,7 +136,7 @@ impl AppState {
         self.groq_api_key.read().map(|g| g.clone()).unwrap_or_default()
     }
     pub fn anthropic_key(&self) -> String {
-        self.anthropic_api_key.read().map(|g| g.clone()).unwrap_or_default()
+        self.anthropic_api_key.read().map(|g| g.trim().to_string()).unwrap_or_default()
     }
     pub fn set_groq_key(&self, v: String) {
         if let Ok(mut g) = self.groq_api_key.write() {
@@ -272,6 +274,9 @@ fn main() {
             commands::submit_word_correction,
             commands::save_word_corrections,
             commands::export_diagnostics,
+            commands::submit_prompt_review,
+            commands::cancel_prompt_review,
+            commands::import_vocabulary_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

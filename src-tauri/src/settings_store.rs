@@ -7,7 +7,7 @@ use tauri::{AppHandle, Manager, Runtime};
 
 const SETTINGS_FILE: &str = "settings.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VocabEntry {
     pub spoken: String,
     pub replace_with: String,
@@ -175,6 +175,11 @@ pub struct PromptMode {
     pub show_preview: bool,
     pub preview_timeout_seconds: u32,
     pub manual_app_override: Option<String>,
+    /// Opt-in: after Sonnet rewrites the prompt, open an editable review window
+    /// and paste nothing until the user approves. Supersedes `show_preview` when
+    /// on. `#[serde(default)]` so existing settings.json files load unchanged.
+    #[serde(default)]
+    pub review_before_insert: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,6 +263,7 @@ impl Default for Settings {
                 show_preview: true,
                 preview_timeout_seconds: 5,
                 manual_app_override: None,
+                review_before_insert: false,
             },
             stt: Stt {
                 provider: "groq".to_string(),

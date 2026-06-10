@@ -76,6 +76,24 @@
         "visible": false,
         "skipTaskbar": false,
         "center": true
+      },
+      {
+        "label": "review",
+        "url": "index.html#review",
+        "title": "Review prompt",
+        "width": 560,
+        "height": 380,
+        "minWidth": 460,
+        "minHeight": 300,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "alwaysOnTop": true,
+        "focus": true,
+        "visible": false,
+        "skipTaskbar": false,
+        "center": true
       }
     ],
     "security": {

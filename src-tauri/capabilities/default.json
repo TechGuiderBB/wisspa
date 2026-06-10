@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability granted to the main window",
-  "windows": ["main", "overlay", "settings", "onboarding"],
+  "windows": ["main", "overlay", "settings", "onboarding", "review"],
   "permissions": [
     "core:default",
     "core:event:allow-listen",
