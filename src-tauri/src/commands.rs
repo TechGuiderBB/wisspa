@@ -253,6 +253,23 @@ pub fn list_actions() -> Vec<crate::actions::Action> {
     registry::snapshot()
 }
 
+/// Insert the (possibly edited) reviewed prompt: resolve the backend wait for
+/// this recording so `prompt_mode::run` pastes `text`. A stale/superseded
+/// session has no pending review, so this is a harmless no-op (still `Ok`).
+#[tauri::command]
+pub fn submit_prompt_review(session: u64, text: String) -> Result<(), String> {
+    crate::prompt_review::resolve(session, crate::prompt_review::ReviewDecision::Insert(text));
+    Ok(())
+}
+
+/// Cancel the reviewed prompt: resolve the backend wait with Cancel so nothing
+/// is pasted. No-op for a stale/superseded session.
+#[tauri::command]
+pub fn cancel_prompt_review(session: u64) -> Result<(), String> {
+    crate::prompt_review::resolve(session, crate::prompt_review::ReviewDecision::Cancel);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn process_audio<R: Runtime>(
     app: AppHandle<R>,
@@ -422,6 +439,14 @@ async fn run_prompt_mode<R: Runtime>(
     session: u64,
 ) -> Result<String, String> {
     let anthropic_key = state.anthropic_key();
+    // Up-front preflight: if there's no Anthropic key, fail fast with a
+    // specific, actionable toast BEFORE app detection / selection capture
+    // (Cmd+C) / route emit / any HTTP call. Never log or surface the key value.
+    if prompt_mode::anthropic_key_missing(&anthropic_key) {
+        log::warn!("prompt mode aborted: Anthropic API key not configured");
+        toast::error(app, "Prompt mode unavailable", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST);
+        return Err(format!("prompt: {}", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST));
+    }
     match prompt_mode::run(app, &anthropic_key, transcript, session).await {
         Ok(outcome) => {
             let preview = preview(&outcome.inserted);

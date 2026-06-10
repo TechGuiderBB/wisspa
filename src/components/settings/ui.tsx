@@ -24,10 +24,12 @@ export function Toggle({
   checked,
   onChange,
   label,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label?: string;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -35,10 +37,11 @@ export function Toggle({
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-[22px] w-[38px] flex-none items-center rounded-full transition-colors duration-150 ${
         checked ? "bg-accent" : "bg-neutral-300"
-      } focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}
+      } disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}
     >
       <span
         aria-hidden
