@@ -439,6 +439,14 @@ async fn run_prompt_mode<R: Runtime>(
     session: u64,
 ) -> Result<String, String> {
     let anthropic_key = state.anthropic_key();
+    // Up-front preflight: if there's no Anthropic key, fail fast with a
+    // specific, actionable toast BEFORE app detection / selection capture
+    // (Cmd+C) / route emit / any HTTP call. Never log or surface the key value.
+    if prompt_mode::anthropic_key_missing(&anthropic_key) {
+        log::warn!("prompt mode aborted: Anthropic API key not configured");
+        toast::error(app, "Prompt mode unavailable", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST);
+        return Err(format!("prompt: {}", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST));
+    }
     match prompt_mode::run(app, &anthropic_key, transcript, session).await {
         Ok(outcome) => {
             let preview = preview(&outcome.inserted);

@@ -46,6 +46,21 @@ fn hide_review_window<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// User-facing toast body shown when Prompt Mode is triggered with no Anthropic
+/// key configured. Names the provider and the exact Settings destination so the
+/// user can self-serve. Must never contain a key value.
+pub const ANTHROPIC_KEY_MISSING_TOAST: &str =
+    "Anthropic API key missing - add it in Settings > API Keys";
+
+/// Preflight classifier for Prompt Mode: the resolved Anthropic key is treated
+/// as *missing* when it is absent or whitespace-only. Stronger than llm.rs's
+/// bare `is_empty()` (catches a key set to "   "); that check stays as a
+/// defence-in-depth backstop for the actual HTTP call. Pure + side-effect-free
+/// so it is unit-testable without a Tauri app handle.
+pub fn anthropic_key_missing(key: &str) -> bool {
+    key.trim().is_empty()
+}
+
 /// Payload for `EVENT_PROMPT_ROUTE`. Field names mirror the frontend `PromptRoute`
 /// type exactly (serde keeps these lowercase names, which the TS union expects).
 #[derive(serde::Serialize, Clone)]
@@ -328,7 +343,27 @@ fn first_chars(s: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_branch, host_from_url};
+    use super::{anthropic_key_missing, classify_branch, host_from_url, ANTHROPIC_KEY_MISSING_TOAST};
+
+    #[test]
+    fn anthropic_key_missing_detects_absent_and_whitespace_only() {
+        assert!(anthropic_key_missing(""));
+        assert!(anthropic_key_missing("   "));
+        assert!(anthropic_key_missing("\t\n"));
+        assert!(!anthropic_key_missing("sk-ant-abc123"));
+        // Padding does not make a real key "missing".
+        assert!(!anthropic_key_missing("  sk-ant-xyz  "));
+    }
+
+    #[test]
+    fn missing_key_toast_names_provider_and_settings_path() {
+        let m = ANTHROPIC_KEY_MISSING_TOAST;
+        assert!(m.contains("Anthropic"));
+        assert!(m.contains("Settings"));
+        assert!(m.contains("API Keys"));
+        // No key material ever embedded in the message.
+        assert!(!m.contains("sk-ant"));
+    }
 
     #[test]
     fn host_from_url_strips_scheme_path_port_and_www() {
