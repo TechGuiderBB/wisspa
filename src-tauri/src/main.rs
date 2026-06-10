@@ -26,6 +26,7 @@ mod sounds;
 mod stt;
 mod toast;
 mod tray;
+mod vocab_import;
 
 use std::path::PathBuf;
 use tauri::{Listener, LogicalPosition};
@@ -275,6 +276,7 @@ fn main() {
             commands::export_diagnostics,
             commands::submit_prompt_review,
             commands::cancel_prompt_review,
+            commands::import_vocabulary_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

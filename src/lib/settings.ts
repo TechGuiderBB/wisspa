@@ -9,6 +9,30 @@ export type VocabEntry = {
   replace_with: string;
 };
 
+export type VocabImportSkip = {
+  line: number;
+  reason: string;
+};
+
+export type VocabImport = {
+  to_add: VocabEntry[];
+  skipped: VocabImportSkip[];
+  already_existing: number;
+};
+
+/**
+ * Parse a `spoken,replacement` CSV (header optional) into an import preview.
+ * Note: the Rust param is `csv_text`; Tauri maps JS camelCase → snake_case, so
+ * this MUST be called with `{ csvText, existing }` — a mismatch silently sends
+ * an empty string and the import does nothing.
+ */
+export async function importVocabularyCsv(
+  csvText: string,
+  existing: VocabEntry[],
+): Promise<VocabImport> {
+  return await invoke<VocabImport>("import_vocabulary_csv", { csvText, existing });
+}
+
 export const SENSITIVITY_MULTIPLIER: Record<MicSensitivity, number> = {
   off: 0, // 0 == disable silence guard entirely (sentinel value)
   low: 0.5,
