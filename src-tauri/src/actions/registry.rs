@@ -228,13 +228,17 @@ fn migrate_known_actions<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
             include_str!("../../../default-actions/new_note.yaml"),
         ),
         (
-            // v0.1.0 shipped `fn+f11`, but the AppleScript keystroke layer
-            // rejects the `fn` modifier so the action never worked. Users who
-            // copied that broken default on first launch keep it forever
-            // unless we migrate it. Untouched user edits are preserved.
+            // v0.1.0 shipped `fn+f11` keystroke, but the AppleScript keystroke
+            // layer rejects the `fn` modifier so the action errored on trigger.
+            // PR #24 shipped a bare `f11` keystroke; this PR re-expresses it as
+            // an `applescript` Show Desktop system event (`key code 103`), off
+            // the combo-parser path entirely. Untouched copies of *either*
+            // prior keystroke default upgrade to the applescript form; user
+            // edits are preserved.
             "show_desktop.yaml",
             &[
                 "id: show_desktop\nname: \"Show Desktop\"\ndescription: \"Reveals the desktop (Mission Control gesture)\"\ntriggers:\n  - \"show desktop\"\ntype: keystroke\ncommand: \"fn+f11\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Showing desktop\"\nfailure_feedback: \"Could not show desktop\"\nenabled: true\n",
+                "id: show_desktop\nname: \"Show Desktop\"\ndescription: \"Reveals the desktop (Mission Control gesture)\"\ntriggers:\n  - \"show desktop\"\ntype: keystroke\ncommand: \"f11\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Showing desktop\"\nfailure_feedback: \"Could not show desktop\"\nenabled: true\n",
             ],
             include_str!("../../../default-actions/show_desktop.yaml"),
         ),
@@ -361,6 +365,40 @@ mod tests {
                 "{file} default should carry a bare {bare} trigger"
             );
         }
+    }
+
+    #[test]
+    fn show_desktop_default_is_applescript_and_migrates_prior_keystrokes() {
+        // Regression guard for v1-backlog #4: the show_desktop default used to
+        // be a keystroke routed through the combo parser (which rejects `fn`).
+        // It now ships as an applescript Show Desktop system event, and both
+        // historical keystroke defaults must upgrade to it.
+        let repo_default = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("default-actions")
+            .join("show_desktop.yaml");
+        let body = std::fs::read_to_string(&repo_default).unwrap();
+
+        // Shipped default parses + validates as an applescript action with no
+        // `fn` modifier anywhere in the command.
+        let action = parse_file(&repo_default).unwrap();
+        assert!(matches!(
+            action.action_type,
+            crate::actions::ActionType::Applescript
+        ));
+        assert!(!action.command.trim().is_empty());
+        assert!(!action.command.to_lowercase().contains("fn"));
+
+        // Both historical keystroke defaults upgrade to the current applescript
+        // body; a copy already on the current body is a no-op (so we don't
+        // rewrite the file every launch).
+        let fn_f11 = "id: show_desktop\nname: \"Show Desktop\"\ndescription: \"Reveals the desktop (Mission Control gesture)\"\ntriggers:\n  - \"show desktop\"\ntype: keystroke\ncommand: \"fn+f11\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Showing desktop\"\nfailure_feedback: \"Could not show desktop\"\nenabled: true\n";
+        let f11 = "id: show_desktop\nname: \"Show Desktop\"\ndescription: \"Reveals the desktop (Mission Control gesture)\"\ntriggers:\n  - \"show desktop\"\ntype: keystroke\ncommand: \"f11\"\nworking_dir: null\nrequires_permissions: []\ndestructive: false\nsuccess_feedback: \"Showing desktop\"\nfailure_feedback: \"Could not show desktop\"\nenabled: true\n";
+        let past = [fn_f11, f11];
+        assert_eq!(migration_target(fn_f11, &past, &body), Some(body.as_str()));
+        assert_eq!(migration_target(f11, &past, &body), Some(body.as_str()));
+        assert_eq!(migration_target(&body, &past, &body), None);
     }
 
     #[test]

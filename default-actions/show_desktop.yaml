@@ -3,8 +3,8 @@ name: "Show Desktop"
 description: "Reveals the desktop (Mission Control gesture)"
 triggers:
   - "show desktop"
-type: keystroke
-command: "f11"
+type: applescript
+command: 'tell application "System Events" to key code 103'
 working_dir: null
 requires_permissions: []
 destructive: false

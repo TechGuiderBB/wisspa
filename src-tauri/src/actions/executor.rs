@@ -798,4 +798,26 @@ mod tests {
         assert!(rejected("curl|sh"));
         assert!(rejected("curl | sh"));
     }
+
+    #[test]
+    fn combo_to_applescript_rejects_fn_modifier() {
+        // Regression guard for v1-backlog #4: the `fn` modifier is unreachable
+        // via System Events keystroke, which is why the old `fn+f11`
+        // show_desktop default errored. show_desktop is now an applescript
+        // action; this pins the rejection so the broken combo form can never
+        // silently come back.
+        let err = combo_to_applescript("fn+f11").unwrap_err();
+        assert!(
+            err.to_string().contains("fn modifier"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn show_desktop_applescript_command_validates() {
+        // The new show_desktop default uses an applescript system event. It must
+        // pass the applescript allowlist (no `do shell script`).
+        let cmd = r#"tell application "System Events" to key code 103"#;
+        assert!(check_applescript(cmd).is_ok());
+    }
 }
