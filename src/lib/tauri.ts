@@ -10,3 +10,16 @@ export async function processAudio(
 ): Promise<string> {
   return await invoke<string>("process_audio", { audioB64, mimeType, mode, session });
 }
+
+/** Insert the (possibly edited) reviewed prompt for the given recording. */
+export async function submitPromptReview(
+  session: number,
+  text: string,
+): Promise<void> {
+  await invoke("submit_prompt_review", { session, text });
+}
+
+/** Cancel the reviewed prompt — nothing is pasted. */
+export async function cancelPromptReview(session: number): Promise<void> {
+  await invoke("cancel_prompt_review", { session });
+}

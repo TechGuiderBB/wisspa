@@ -25,6 +25,7 @@ import {
 } from "./lib/promptRoute";
 import { useRecording } from "./store/recording";
 import RecordingOverlay from "./components/RecordingOverlay";
+import PromptReview from "./components/PromptReview";
 import SettingsPage from "./pages/Settings";
 import OnboardingPage from "./pages/Onboarding";
 
@@ -44,10 +45,14 @@ const HASH = typeof window !== "undefined" ? window.location.hash : "";
 const isOverlayWindow = HASH === "#overlay";
 const isSettingsWindow = HASH === "#settings";
 const isOnboardingWindow = HASH === "#onboarding";
+const isReviewWindow = HASH === "#review";
 
 export default function App() {
   if (isOverlayWindow) {
     return <RecordingOverlay />;
+  }
+  if (isReviewWindow) {
+    return <PromptReview />;
   }
   if (isSettingsWindow) {
     return <SettingsPage />;

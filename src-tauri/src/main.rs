@@ -17,6 +17,7 @@ mod logging;
 mod modes;
 mod permissions;
 mod prearm;
+mod prompt_review;
 mod redact;
 mod selection;
 mod session;
@@ -272,6 +273,8 @@ fn main() {
             commands::submit_word_correction,
             commands::save_word_corrections,
             commands::export_diagnostics,
+            commands::submit_prompt_review,
+            commands::cancel_prompt_review,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
