@@ -55,9 +55,9 @@ objc2-foundation = { version = "0.3", features = ["NSData", "NSArray", "NSString
 
 [dev-dependencies]
 # `test` feature enables tauri::test::mock_app() / MockRuntime, used by the
-# executor suppression tests to drive execute()/run_confirmed() without a real
-# window or macOS permissions. Cargo feature-unifies this with the normal tauri
-# dep, so no second copy is pulled into the audit surface.
+# executor unit tests to drive execute()/run_confirmed() without a real
+# window or macOS permissions. This is a dev-dependency: it is compiled only
+# for test builds and has no effect on the release binary.
 tauri = { version = "2", features = ["test"] }
 
 [features]

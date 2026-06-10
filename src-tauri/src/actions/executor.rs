@@ -709,8 +709,17 @@ mod tests {
         let act = action(true, ActionType::Shell, &cmd);
 
         let out = execute(&h, &act, "").await.unwrap();
+        let timeout_token = format!(
+            "{}s",
+            crate::actions::pending::CONFIRMATION_TIMEOUT.as_secs()
+        );
         assert!(!out.success, "destructive action must not report success on trigger");
-        assert!(out.message.contains("15"), "stage message names the 15s window: {}", out.message);
+        assert!(
+            out.message.contains(&timeout_token),
+            "stage message must contain the timeout token \"{}\": {}",
+            timeout_token,
+            out.message
+        );
         assert!(
             !sentinel.exists(),
             "SECURITY: destructive side effect ran before confirmation"
