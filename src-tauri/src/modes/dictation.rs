@@ -98,12 +98,6 @@ pub async fn run<R: Runtime>(
 
     injector::inject_text(app, &final_text, Some(&active_app), session).await?;
 
-    // Reaching this line means injection succeeded (inject_text uses `?`), so
-    // this is the true "dictation finished" moment. Gated inside sounds::play
-    // on both play_sounds and dictation_complete_sound (off by default). Only
-    // dictation calls this, so Action/Prompt modes never chime; and the early
-    // returns above (cancel, empty, hallucination, STT/inject error) never
-    // reach here. sounds::play spawns its own afplay, so it does not block.
     crate::sounds::play(app, crate::sounds::Cue::Complete);
 
     // Spawn auto-learn snapshot task if the user has opted in.
