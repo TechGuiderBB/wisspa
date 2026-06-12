@@ -180,6 +180,16 @@ export default function GeneralTab({ settings, patch }: Props) {
               label="Ready chime"
             />
           </Row>
+          <Row
+            label="Dictation finished sound"
+            hint="Play a subtle chime when dictation finishes and the text is inserted."
+          >
+            <Toggle
+              checked={g.dictation_complete_sound}
+              onChange={(v) => patch({ dictation_complete_sound: v })}
+              label="Dictation finished sound"
+            />
+          </Row>
         </>
       )}
 

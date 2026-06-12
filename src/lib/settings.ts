@@ -62,6 +62,7 @@ export type Settings = {
     notes_path: string;
     max_recording_seconds: number;
     ready_chime: boolean;
+    dictation_complete_sound: boolean;
     fast_recording_start: boolean;
     quiet_notifications: boolean;
     verbose_logging: boolean;

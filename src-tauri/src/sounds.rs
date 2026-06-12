@@ -11,6 +11,7 @@ pub enum Cue {
     Stop,
     Cancel,
     Timeout,
+    Complete,
 }
 
 impl Cue {
@@ -24,6 +25,8 @@ impl Cue {
             Cue::Cancel => "/System/Library/Sounds/Funk.aiff",
             // Warning chime — recording auto-stopped.
             Cue::Timeout => "/System/Library/Sounds/Sosumi.aiff",
+            // Gentle "done" chime — dictation finished and text was inserted.
+            Cue::Complete => "/System/Library/Sounds/Glass.aiff",
         }
     }
 }
@@ -37,6 +40,9 @@ pub fn play<R: Runtime>(app: &AppHandle<R>, cue: Cue) {
         return;
     }
     if matches!(cue, Cue::Start) && !settings.general.ready_chime {
+        return;
+    }
+    if matches!(cue, Cue::Complete) && !settings.general.dictation_complete_sound {
         return;
     }
     let path = cue.system_sound();
