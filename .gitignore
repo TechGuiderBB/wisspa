@@ -31,6 +31,15 @@ src-tauri/gen/
 # Logs
 *.log
 
+# User data — runtime history DB must NEVER be committed (lives in the app
+# data dir; these patterns guard against a stray copy landing in the repo)
+history.db
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
 # Codex / agent session state
 .context/
 
