@@ -801,11 +801,11 @@ mod tests {
 
     #[test]
     fn combo_to_applescript_rejects_fn_modifier() {
-        // Regression guard for v1-backlog #4: the `fn` modifier is unreachable
-        // via System Events keystroke, which is why the old `fn+f11`
-        // show_desktop default errored. show_desktop is now an applescript
-        // action; this pins the rejection so the broken combo form can never
-        // silently come back.
+        // Regression guard: the `fn` modifier is unreachable via System
+        // Events keystroke, which is why the old `fn+f11` show_desktop
+        // default errored. show_desktop is now an applescript action; this
+        // pins the rejection so the broken combo form can never silently
+        // come back.
         let err = combo_to_applescript("fn+f11").unwrap_err();
         assert!(
             err.to_string().contains("fn modifier"),

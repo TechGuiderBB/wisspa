@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { getSettings, saveSettings, type Settings, type VocabEntry } from "../lib/settings";
 import GeneralTab from "../components/settings/GeneralTab";
 import ApiKeysTab from "../components/settings/ApiKeysTab";
@@ -37,9 +38,11 @@ export default function SettingsPage() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [active, setActive] = useState<TabId>("general");
   const [saving, setSaving] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
 
   useEffect(() => {
     getSettings().then(setSettings).catch(console.error);
+    getVersion().then(setAppVersion).catch(() => {});
   }, []);
 
   function persist(next: Settings) {
@@ -87,7 +90,7 @@ export default function SettingsPage() {
           <div>
             <div className="text-sm font-semibold leading-tight">Wisspa</div>
             <div className="text-[10px] text-neutral-500 leading-tight">
-              v0.1.0
+              {appVersion ? `v${appVersion}` : ""}
             </div>
           </div>
         </div>

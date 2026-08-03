@@ -369,10 +369,10 @@ mod tests {
 
     #[test]
     fn show_desktop_default_is_applescript_and_migrates_prior_keystrokes() {
-        // Regression guard for v1-backlog #4: the show_desktop default used to
-        // be a keystroke routed through the combo parser (which rejects `fn`).
-        // It now ships as an applescript Show Desktop system event, and both
-        // historical keystroke defaults must upgrade to it.
+        // Regression guard: the show_desktop default used to be a keystroke
+        // routed through the combo parser (which rejects `fn`). It now ships
+        // as an applescript Show Desktop system event, and both historical
+        // keystroke defaults must upgrade to it.
         let repo_default = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()

@@ -1,14 +1,13 @@
 # AGENTS.md — Wisspa (macOS app)
 
-> Working memory for the Wisspa Tauri app repo. For the full workspace context covering **both** this repo and the sibling `WisspaWEB` marketing site, see `../WisspaWEB/AGENTS.md` (or [`TechGuiderau/WisspaWEB`](https://github.com/TechGuiderau/WisspaWEB) → `AGENTS.md`).
->
-> Read this first before making changes in this codebase.
+> Working memory for the Wisspa Tauri app repo. Read this first before making changes in this codebase.
+> `CLAUDE.md` points here — there is one canonical guide.
 
 ---
 
 ## 1. What this repo is
 
-The macOS desktop app. Tauri 2 (Rust backend, React/Vite/TypeScript frontend). Bundle identifier `com.techguider.wisspa`. macOS 13+ on Apple Silicon only.
+The macOS desktop app. Tauri 2 (Rust backend, React/Vite/TypeScript frontend). Bundle identifier `com.techguider.wisspa`. macOS 13+ on Apple Silicon only. Open source under the MIT License.
 
 System-wide AI voice tool: hold a hotkey, speak, Wisspa does one of three things based on which hotkey was pressed:
 
@@ -21,23 +20,11 @@ System-wide AI voice tool: hold a hotkey, speak, Wisspa does one of three things
 
 The differentiator is **Prompt Mode** — most voice tools solve dictation; Wisspa solves voice-to-good-prompt.
 
-**Status:** v0.3.0 public preview, heading toward v1.0 general release. Commercial model: $15 USD / month, 14-day trial, no credit card, LemonSqueezy billing (see `LAUNCH.md`).
+**Status:** v0.3.0 public preview, heading toward v1.0 general release. The app is BYO-key: users supply their own Groq + Anthropic keys (stored in macOS Keychain); the app itself ships with no credentials and talks only to `api.groq.com` and `api.anthropic.com`.
 
 ---
 
-## 2. Sibling repo
-
-```
-~/dev/GitHub/
-├── wisspa/          ← THIS REPO (Tauri 2 + Rust + React)
-└── WisspaWEB/       ← Next.js 15 marketing site (wisspa.app)
-```
-
-The marketing site reads `default-actions/*.yaml` from this repo at build time. Cross-repo workflow is documented in `../WisspaWEB/AGENTS.md` §5.
-
----
-
-## 3. Tech stack
+## 2. Tech stack
 
 | Layer | Choice | Pinned at |
 |---|---|---|
@@ -54,25 +41,25 @@ The marketing site reads `default-actions/*.yaml` from this repo at build time. 
 | Local storage | JSON via `tauri-plugin-store` for settings; SQLite via `rusqlite` (bundled) for history | |
 | Shell execution | `tauri-plugin-shell` with custom allowlist validation | `src-tauri/src/actions/registry.rs` |
 | Clipboard | `tauri-plugin-clipboard-manager` | |
-| Text injection | AppleScript `osascript -e 'tell application "System Events" to keystroke "v" using command down'`, **not** `enigo` (`enigo` kept for the `keystroke` action type — see `DECISIONS.md` item 9) | `src-tauri/src/injector.rs` |
+| Text injection | AppleScript `osascript -e 'tell application "System Events" to keystroke "v" using command down'` — deliberately **not** `enigo` (see `DECISIONS.md` item 9) | `src-tauri/src/injector.rs` |
 | HTTP client | `reqwest` 0.12 with `rustls-tls`, `json`, `multipart` | |
 | Async runtime | `tokio` 1 (`full` features) | |
 | Keychain | `keyring` 3 with `apple-native` | `src-tauri/src/keychain.rs` |
 | YAML parsing | `serde_yaml` 0.9 | `src-tauri/src/actions/registry.rs` |
 | Fuzzy matching | `strsim` 0.11 (Levenshtein) | `src-tauri/src/actions/matcher.rs` |
 | File watching | `notify` 6 + `notify-debouncer-mini` 0.4 — for action-registry hot-reload | |
-| Auto-updater | `tauri-plugin-updater` 2.10.1 | |
+| Auto-updater | `tauri-plugin-updater` 2.10.1 (endpoints point at this repo's GitHub Releases) | |
 | Launch-on-login | `tauri-plugin-autostart` 2.5.1 | |
 
 ---
 
-## 4. Folder structure
+## 3. Folder structure
 
 ```
 wisspa/
 ├── src-tauri/                       # Rust backend
 │   ├── Cargo.toml
-│   ├── tauri.conf.json              # Window definitions, identifier, bundling
+│   ├── tauri.conf.json              # Window definitions, identifier, bundling, updater
 │   ├── Info.plist                   # macOS usage descriptions (Mic / Apple Events / Screen Capture)
 │   ├── entitlements.plist
 │   ├── capabilities/default.json    # Tauri 2 capability acl
@@ -80,7 +67,7 @@ wisspa/
 │   └── src/
 │       ├── main.rs                  # Entry point + window positioning + setup
 │       ├── lib.rs
-│       ├── commands.rs              # All Tauri commands exposed to the frontend (process_audio lives here at L227)
+│       ├── commands.rs              # All Tauri commands exposed to the frontend (process_audio lives here)
 │       ├── hotkeys.rs               # Global shortcut registration, live reassignment
 │       ├── audio.rs                 # Audio bridge to frontend
 │       ├── stt.rs                   # Groq Whisper multipart upload + hallucination filter
@@ -110,7 +97,7 @@ wisspa/
 │   ├── App.tsx                      # Hash router → runtime / overlay / settings / onboarding
 │   ├── components/
 │   │   ├── RecordingOverlay.tsx
-│   │   └── settings/                # 7 settings tabs
+│   │   └── settings/                # Settings tabs (General, API Keys, Hotkeys, Actions, Prompt Mode, Vocab, Corrections, History, About)
 │   ├── pages/
 │   │   ├── Onboarding.tsx           # 8-step first-launch wizard
 │   │   └── Settings.tsx
@@ -120,19 +107,20 @@ wisspa/
 │   │   └── tauri.ts
 │   └── store/
 │       └── recording.ts             # Zustand recording state
-├── default-actions/                 # 14 default YAML actions shipped with installer (read by WisspaWEB)
+├── default-actions/                 # 14 default YAML actions shipped with installer
 ├── .github/workflows/
 │   ├── release.yml                  # Build + sign + publish
-│   └── security.yml                 # gitleaks + cargo audit (weekly cron)
+│   └── security.yml                 # gitleaks + cargo audit + tests
 ├── DECISIONS.md                     # Implementation choices + reasoning
-├── LAUNCH.md                        # Commercial launch plan (pricing, billing, distribution)
-├── WISSPA_PRD.md                    # Original product PRD (slightly out of date — see WisspaWEB/docs/wisspa-product-current-state.md)
+├── WISSPA_PRD.md                    # Original product PRD (partially out of date; code wins)
+├── CONTRIBUTING.md
+├── SECURITY.md
 └── README.md
 ```
 
 ---
 
-## 5. The three runtime windows
+## 4. The runtime windows
 
 Defined in `src-tauri/tauri.conf.json`. Critical to understand because the pill UX depends on the layout.
 
@@ -140,18 +128,18 @@ Defined in `src-tauri/tauri.conf.json`. Critical to understand because the pill 
 |---|---|---|---|---|
 | `main` | 220×56 | Yes (transparent, undecorated, `focus: false`) | No | Hosts the WebView for MediaRecorder and the idle pill. **WKWebView throttles JS in hidden windows — this window MUST stay visible.** See `DECISIONS.md` item 11. |
 | `overlay` | 220×56 | No (toggled by hotkey) | Yes | Stacks on top of `main` to show recording state (flashing red dot). |
-| `settings` | 820×600 | No (opened on demand) | No | The 7-tab settings GUI. |
+| `settings` | 820×600 | No (opened on demand) | No | The settings GUI. |
 | `onboarding` | 720×560 | No (opened on first launch) | No | First-launch 8-step wizard. |
 
-Pill anchors to the **primary** monitor (set in `main.rs::position_overlay_top_center`). Multi-display users need their preferred display set as primary in System Settings → Displays → Arrange.
+The pill follows the monitor the cursor is on (see `main.rs`).
 
 ---
 
-## 6. The pipeline (every mode)
+## 5. The pipeline (every mode)
 
 1. Hotkey **press** in `hotkeys.rs` → emits `wisspa://recording-mode` with mode name + `wisspa://start-recording`. Also calls `app_detector::snapshot_target_app_now()` so the user's *intended* frontmost app is captured at press time.
 2. Frontend (`App.tsx`) starts `MediaRecorder` (`audio/webm;codecs=opus` preferred). Overlay window is shown by Rust.
-3. Hotkey **release** → frontend stops `MediaRecorder`, runs silence guard, calls Rust `process_audio` (base64 audio + mode) — see `commands.rs:227`.
+3. Hotkey **release** → frontend stops `MediaRecorder`, runs silence guard, calls Rust `process_audio` (base64 audio + mode).
 4. Rust decodes → Groq Whisper STT → Whisper-hallucination filter → routes by mode.
 5. **Dictation:** Haiku cleanup with `{ACTIVE_APP_NAME}` in system prompt → inject via clipboard + `Cmd+V`.
 6. **Action:** match against YAML registry (exact then fuzzy via `strsim::levenshtein` ≤ 3) → execute via `actions/executor.rs`.
@@ -160,7 +148,7 @@ Pill anchors to the **primary** monitor (set in `main.rs::position_overlay_top_c
 
 ---
 
-## 7. Action types
+## 6. Action types
 
 Five action types, declared in YAML, validated on load:
 
@@ -170,13 +158,13 @@ Five action types, declared in YAML, validated on load:
 | `applescript` | An AppleScript string run via `osascript`. | `set volume with output muted` |
 | `open_url` | URL template; supports `{query}`. | `https://github.com/search?q={query}` |
 | `open_app` | App name; supports `{query}` for "open {query}". | `Cursor` |
-| `keystroke` | Key combo dispatched via `enigo` in a child process (isolated from host — see `DECISIONS.md` item 9). | `cmd+shift+5` |
+| `keystroke` | Key combo converted to AppleScript System Events keystroke (`combo_to_applescript`). | `cmd+shift+5` |
 
 Placeholders in `command`: `{query}`, `{clipboard}`, `{selected_text}`, `{active_app}`.
 
 ---
 
-## 8. Install & run
+## 7. Install & run
 
 **Prerequisites:**
 - macOS 13+ on Apple Silicon
@@ -188,7 +176,8 @@ Placeholders in `command`: `{query}`, `{clipboard}`, `{selected_text}`, `{active
 **Dev:**
 
 ```bash
-cd ~/dev/GitHub/wisspa
+git clone https://github.com/TechGuiderBB/wisspa.git
+cd wisspa
 pnpm install
 # Put keys in .env for dev — keychain prompts every rebuild otherwise (see Gotchas)
 echo "GROQ_API_KEY=..." > .env
@@ -211,7 +200,7 @@ xattr -d com.apple.quarantine /Applications/Wisspa.app
 
 ---
 
-## 9. Storage locations
+## 8. Storage locations
 
 | What | Where |
 |---|---|
@@ -234,70 +223,75 @@ Usage descriptions live in `src-tauri/Info.plist`. About tab has a live diagnost
 
 ---
 
-## 10. Testing
+## 9. Testing
 
-No automated test suite in the Rust code as of this snapshot. CI runs:
+Rust unit tests live in `#[cfg(test)]` modules across `src-tauri/src/` (llm, session, prompt_review, executor, clipboard, registry, app_detector, learning, vocab_import, redact, pending). Run them with:
 
-- **`security.yml`** — `gitleaks` (secret scanning) + `cargo audit` (dependency vulnerabilities). On push, on PR, and weekly cron.
-- **`release.yml`** — build + sign + publish (full contents not yet audited).
+```bash
+cd src-tauri && cargo test
+```
+
+Frontend typechecking: `pnpm build` (runs `tsc` + Vite build).
+
+CI:
+
+- **`security.yml`** — `gitleaks` (full-history secret scanning) + `cargo audit` + `cargo test` + frontend typecheck. On push, on PR, and weekly cron.
+- **`release.yml`** — build + sign + publish to GitHub Releases.
 
 **Manual QA path:** the acceptance criteria in `README.md` and `WISSPA_PRD.md §11` are canonical. Includes real-app smoke tests (Cursor, Claude desktop, Slack, Gmail in Chrome, Notes, Obsidian).
 
 ---
 
-## 11. Conventions
+## 10. Conventions
 
 - Prompts (Haiku cleanup, Sonnet rewrite) live as `.md` files under `src-tauri/src/prompts/` and are loaded via `include_str!()` in `llm.rs`. **Edit those files — don't put prompt strings in Rust source.**
 - YAML action files are source of truth for the registry. Rust parses and validates them on load, hot-reloads on file changes.
 - Settings schema is **mirrored on both sides**: `src-tauri/src/settings_store.rs` (Rust) and `src/lib/settings.ts` (TS). Changes need both.
 - The `.env` file is dev-only and is git-ignored. Production reads from Keychain.
-- AppleScript is preferred over `enigo` for `Cmd+V` because `enigo`'s `CGEventPost` aborts the host process even with Accessibility granted (`DECISIONS.md` item 9). `enigo` is still used for the `keystroke` action type but runs in its own child process.
+- AppleScript is preferred over `enigo` for synthetic keystrokes: `enigo`'s `CGEventPost` aborts the host process even with Accessibility granted (`DECISIONS.md` item 9).
+- Committed docs stay free of personal names, machine-local paths, and business/commercial details — this is a public repo.
 
 ---
 
-## 12. Gotchas (read before changing the app)
+## 11. Gotchas (read before changing the app)
 
 1. **Don't hide the `main` window.** WKWebView throttles JS in fully hidden windows, which breaks `MediaRecorder` and the audio path. The runtime window must stay visible — it's the dim pill at top-center (`DECISIONS.md` item 11).
 2. **Keychain prompts every rebuild in dev.** Each Rust rebuild creates a fresh unsigned binary that macOS treats as a new app. Put keys in `.env` while iterating; Keychain takes over in signed production builds.
 3. **Destructive action confirmation goes through the tray menu, not a toast.** The voice trigger does NOT execute a `destructive: true` action — it stores it as pending and surfaces `Confirm: <name>` + `Cancel pending action` items in the tray. 15-second auto-cancel timeout. The pending state replaces (not queues) when a second destructive trigger fires. See `actions/pending.rs` and `actions/executor.rs::execute`.
 4. **Selected-text capture (Prompt Mode) uses a 280 ms post-`Cmd+C` wait.** Reliable for native apps and most editors; flaky for Slack, Notion, some browser tabs (`selection.rs`).
 5. **Hotkey reassignment temporarily unregisters all global shortcuts during capture** so the webview can receive the raw key event. Press `Esc` to cancel cleanly if you abort.
-6. **The pill follows the primary monitor.** Multi-display users should set their preferred display as primary in System Settings → Displays → Arrange.
+6. **The pill follows the cursor's monitor** in multi-display setups.
 7. **`enigo` aborts the host process on macOS.** If you're tempted to switch `Cmd+V` injection back to `enigo` — don't. The abort bypasses `catch_unwind`. AppleScript via `osascript` is the macOS-blessed path.
-8. **`show_desktop` default action ships broken.** It uses `fn+f11` but the AppleScript keystroke layer rejects the `fn` modifier (`actions/executor.rs::combo_to_applescript`). Tracked in `docs/v1-backlog.md`.
 
 ---
 
-## 13. Behavioural rules (inherited from `~/.codex/AGENTS.md`)
+## 12. Behavioural rules
 
 - Do what has been asked; nothing more, nothing less
-- NEVER create files unless absolutely necessary
 - ALWAYS prefer editing an existing file to creating a new one
-- NEVER proactively create documentation files (`*.md`) or README files unless requested
-- NEVER save working files, tests, or markdown to the root folder
+- NEVER proactively create documentation files (`*.md`) unless requested
 - ALWAYS read a file before editing it
 - NEVER commit secrets, credentials, or `.env` files
 - NEVER commit Groq or Anthropic API keys — they belong in `.env` (dev) or Keychain (prod)
+- TypeScript strict mode; handle loading, error, and empty states in UI work
 
 ---
 
-## 14. When you start a session in this repo
+## 13. When you start a session in this repo
 
 1. Read this file
-2. Read `~/.codex/AGENTS.md` (global rules)
-3. If touching anything cross-repo (default actions, system prompts, settings schema) — also read `../WisspaWEB/AGENTS.md` for the workspace-wide picture
-4. Read the relevant PRD section (`WISSPA_PRD.md` or `WisspaWEB/docs/wisspa-product-current-state.md` if the PRD is out of date)
-5. Do the work
+2. Read the relevant PRD section (`WISSPA_PRD.md`; note it drifts — code is authoritative)
+3. Do the work; run `cargo test` and `pnpm build` before opening a PR
 
 ---
 
-## 15. References
+## 14. References
 
 | Doc | Purpose |
 |---|---|
-| `../WisspaWEB/AGENTS.md` | **Workspace-wide context** — covers both repos together, cross-repo workflow, open decisions |
 | `README.md` | App overview, modes, hotkeys, troubleshooting |
-| `WISSPA_PRD.md` | Product PRD — reconciled against v0.1.0 code on 2026-05-16. Treat as the single source of truth for product spec. |
+| `WISSPA_PRD.md` | Product PRD — reconciled against v0.1.0 code on 2026-05-16. Useful product context; code is authoritative where they disagree. |
 | `DECISIONS.md` | Implementation choices and the reasoning behind them |
-| `LAUNCH.md` | Commercial launch plan |
-| `docs/v1-backlog.md` | v1 punch list (open items toward v1.0) |
+| `CHANGELOG.md` | Release history |
+| `CONTRIBUTING.md` | Dev setup, test commands, PR process |
+| `SECURITY.md` | Vulnerability disclosure |

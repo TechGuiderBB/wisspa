@@ -2,7 +2,7 @@
 
 > System-wide AI voice tool for macOS. Hold a hotkey, speak, and Wisspa types — cleaned, structured, and aware of the app you're in.
 
-**Status:** v0.1.0 — all seven phases of the PRD implemented. macOS 13+ on Apple Silicon.
+**Status:** v0.3.0 — all seven phases of the PRD implemented. macOS 13+ on Apple Silicon.
 
 ---
 
@@ -17,7 +17,7 @@ Three modes, three hotkeys:
 | **Prompt** | `Cmd+Shift+P` | Speech (+ optional selected text) → Claude Sonnet rewrites into a structured AI prompt formatted for the focused AI tool (Claude / ChatGPT / Cursor / Gemini) → pasted |
 | **Cancel** | `Esc` | Aborts the current recording, no API call |
 
-A small "Wisspa" pill lives at the top-center of your primary monitor; it flashes red while you're recording.
+A small "Wisspa" pill lives at the top-center of the monitor your cursor is on; it flashes red while you're recording.
 
 ---
 
@@ -35,8 +35,8 @@ A small "Wisspa" pill lives at the top-center of your primary monitor; it flashe
 ### Run from source
 
 ```bash
-git clone <repo>
-cd Wisspa
+git clone https://github.com/TechGuiderBB/wisspa.git
+cd wisspa
 pnpm install
 pnpm tauri dev
 ```
@@ -57,7 +57,7 @@ On first launch the onboarding wizard walks you through:
 pnpm tauri build
 ```
 
-Output: `src-tauri/target/release/bundle/dmg/Wisspa_0.1.0_aarch64.dmg`
+Output: `src-tauri/target/release/bundle/dmg/Wisspa_0.3.0_aarch64.dmg`
 
 Drag `Wisspa.app` into `/Applications/`. If Gatekeeper complains the first time, run:
 
@@ -202,11 +202,7 @@ Production: `Console.app` → filter by `wisspa`. Most log lines are `INFO`-leve
 
 ## License
 
-Wisspa is **proprietary, source-closed software**. Copyright © 2026 TechGuider. All rights reserved. See [`LICENSE`](LICENSE) for the full notice.
-
-No part of the source code is licensed for use, copying, modification, distribution, or sublicensing without prior written permission. Viewing the source (e.g. in a private GitHub mirror) does not grant any right to use it. The compiled application is licensed to end users on a subscription basis under the terms at [wisspa.app/legal/terms](https://wisspa.app/legal/terms).
-
-Commercial enquiries: [contact@example.com](mailto:contact@example.com)
+Wisspa is open source under the [MIT License](LICENSE). Copyright © 2026 TechGuider.
 
 ---
 
