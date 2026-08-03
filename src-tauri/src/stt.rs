@@ -52,30 +52,67 @@ pub async fn transcribe_audio(
         .trim()
         .to_string();
     let filename = guess_filename(&base_mime);
-    let part = Part::bytes(audio_bytes)
-        .file_name(filename.clone())
-        .mime_str(&base_mime)
-        .with_context(|| format!("invalid mime: {base_mime}"))?;
 
-    let mut form = Form::new()
-        .part("file", part)
-        .text("model", model.to_string())
-        .text("response_format", "json")
-        .text("language", language.to_string())
-        .text("temperature", "0");
-    if let Some(hint) = vocab_hint {
-        if !hint.is_empty() {
-            form = form.text("prompt", hint.to_string());
+    // Retry once on transient failures (shared policy in retry.rs): transport
+    // errors and 5xx after a short backoff, 429 honouring Retry-After (capped
+    // at 2s). multipart::Form is not Clone, so the form is rebuilt per
+    // attempt — a small memcpy next to a network round trip.
+    let mut attempt = 0u8;
+    let res = loop {
+        attempt += 1;
+        let part = Part::bytes(audio_bytes.clone())
+            .file_name(filename.clone())
+            .mime_str(&base_mime)
+            .with_context(|| format!("invalid mime: {base_mime}"))?;
+
+        let mut form = Form::new()
+            .part("file", part)
+            .text("model", model.to_string())
+            .text("response_format", "json")
+            .text("language", language.to_string())
+            .text("temperature", "0");
+        if let Some(hint) = vocab_hint {
+            if !hint.is_empty() {
+                form = form.text("prompt", hint.to_string());
+            }
         }
-    }
 
-    let res = HTTP_CLIENT
-        .post(GROQ_TRANSCRIBE_URL)
-        .bearer_auth(api_key)
-        .multipart(form)
-        .send()
-        .await
-        .context("Groq STT request failed")?;
+        match HTTP_CLIENT
+            .post(GROQ_TRANSCRIBE_URL)
+            .bearer_auth(api_key)
+            .multipart(form)
+            .send()
+            .await
+        {
+            Ok(res) => {
+                let status = res.status();
+                if status.is_success()
+                    || attempt >= crate::retry::MAX_ATTEMPTS
+                    || !crate::retry::should_retry(Some(status))
+                {
+                    break res;
+                }
+                // Read Retry-After before the body consumes the response; mask
+                // key-shaped tokens in the provider-controlled body before it
+                // hits the persistent log (same convention as llm.rs).
+                let delay = crate::retry::retry_delay(Some(status), Some(res.headers()));
+                let body = res.text().await.unwrap_or_default();
+                log::warn!(
+                    "Groq STT {status} on attempt {attempt}, retrying in {}ms: {}",
+                    delay.as_millis(),
+                    crate::redact::redact_secrets(&body)
+                );
+                tokio::time::sleep(delay).await;
+            }
+            Err(e) => {
+                if attempt >= crate::retry::MAX_ATTEMPTS {
+                    return Err(e).context("Groq STT request failed");
+                }
+                log::warn!("Groq STT transport error on attempt {attempt}, retrying: {e}");
+                tokio::time::sleep(crate::retry::retry_delay(None, None)).await;
+            }
+        }
+    };
 
     let status = res.status();
     if !status.is_success() {

@@ -40,6 +40,9 @@ pub struct AnthropicParams {
     pub model: &'static str,
     pub max_tokens: u32,
     pub temperature: f32,
+    /// Total request timeout, applied per request (a reqwest request-level
+    /// timeout replaces the shared client's 30s default, not intersects it).
+    pub timeout: Duration,
 }
 
 impl AnthropicParams {
@@ -48,6 +51,7 @@ impl AnthropicParams {
             model: HAIKU_MODEL,
             max_tokens: 2048,
             temperature: 0.2,
+            timeout: Duration::from_secs(30),
         }
     }
     pub const fn sonnet_prompt() -> Self {
@@ -55,13 +59,16 @@ impl AnthropicParams {
             model: SONNET_MODEL,
             max_tokens: 4096,
             temperature: 0.4,
+            // Branch B finished-content essays can be long; give Sonnet more
+            // headroom than the shared client's 30s default.
+            timeout: Duration::from_secs(45),
         }
     }
 }
 
 /// Run the dictation cleanup pass on a raw transcript with the active-app context.
-/// On 5xx errors, retries once. Other failures bubble up so the caller can fall back
-/// to the raw transcript per PRD §5.1.
+/// On 429/5xx errors, retries once (shared policy in retry.rs). Other failures
+/// bubble up so the caller can fall back to the raw transcript per PRD §5.1.
 pub async fn haiku_cleanup_dictation(
     api_key: &str,
     transcript: &str,
@@ -233,6 +240,7 @@ async fn call_anthropic(
             .header("x-api-key", api_key)
             .header("anthropic-version", ANTHROPIC_VERSION)
             .header("content-type", "application/json")
+            .timeout(params.timeout)
             .json(&body)
             .send()
             .await
@@ -251,19 +259,23 @@ async fn call_anthropic(
             return Ok(text.trim().to_string());
         }
 
-        let body_text = res.text().await.unwrap_or_default();
-
-        // Retry once on 5xx per PRD §7.2. The body is provider/proxy-controlled
-        // text written to a persistent log, so mask any key-shaped token first.
-        if status.is_server_error() && attempt < 2 {
+        // Retry once on 429 or 5xx per PRD §7.2 (shared policy in retry.rs).
+        // Retry-After must be read before the body consumes the response; the
+        // body is provider/proxy-controlled text written to a persistent log,
+        // so mask any key-shaped token first.
+        if attempt < crate::retry::MAX_ATTEMPTS && crate::retry::should_retry(Some(status)) {
+            let delay = crate::retry::retry_delay(Some(status), Some(res.headers()));
+            let body_text = res.text().await.unwrap_or_default();
             log::warn!(
-                "Anthropic {status} on attempt {attempt}: {}",
+                "Anthropic {status} on attempt {attempt}, retrying in {}ms: {}",
+                delay.as_millis(),
                 crate::redact::redact_secrets(&body_text)
             );
-            tokio::time::sleep(Duration::from_millis(400)).await;
+            tokio::time::sleep(delay).await;
             continue;
         }
 
+        let body_text = res.text().await.unwrap_or_default();
         return Err(anthropic_http_error(status, &body_text));
     }
 }
