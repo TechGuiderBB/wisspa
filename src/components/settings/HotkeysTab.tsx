@@ -17,6 +17,7 @@ const LABELS: Record<HotkeyAction, string> = {
   dictation: "Dictation",
   action: "Action mode",
   prompt: "Prompt mode",
+  command: "Command mode",
   cancel: "Cancel recording",
 };
 
@@ -24,6 +25,7 @@ const DEFAULTS: Settings["hotkeys"] = {
   dictation: "CmdOrCtrl+Shift+Space",
   action: "CmdOrCtrl+Shift+A",
   prompt: "CmdOrCtrl+Shift+P",
+  command: "CmdOrCtrl+Shift+C",
   cancel: "Escape",
 };
 

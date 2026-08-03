@@ -1,7 +1,7 @@
 use crate::{
     actions::registry, history, hotkeys, keychain, modes::action as action_mode,
-    modes::dictation, modes::prompt as prompt_mode, permissions, settings_store, stt, toast,
-    AppState,
+    modes::command as command_mode, modes::dictation, modes::prompt as prompt_mode, permissions,
+    settings_store, stt, toast, AppState,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
@@ -59,6 +59,7 @@ pub fn save_settings<R: Runtime>(
         &settings.hotkeys.dictation,
         &settings.hotkeys.action,
         &settings.hotkeys.prompt,
+        &settings.hotkeys.command,
     ]);
     crate::prearm::apply(&app, settings.general.fast_recording_start, masks);
     Ok(())
@@ -544,6 +545,7 @@ pub async fn process_audio<R: Runtime>(
                 let (r, fallback) = run_prompt_mode(&app, &state, &transcript, session).await;
                 (r, None, fallback)
             }
+            "command" => (run_command_mode(&app, &state, &transcript, session).await, None, false),
             _ => (run_dictation_mode(&app, &state, &transcript, session).await, None, false),
         };
     let duration_ms = started.elapsed().as_millis() as i64;
@@ -557,6 +559,12 @@ pub async fn process_audio<R: Runtime>(
         ),
         Ok(_) => ("success", None),
         Err(e) if e == crate::hotkeys::CANCELLED_MARKER => ("cancelled", None),
+        // Command Mode with nothing selected: the warn toast already fired in
+        // the mode and no LLM call happened — a cancelled row with the reason,
+        // mirroring the "(no speech detected)" convention.
+        Err(e) if e == command_mode::NO_SELECTION_MARKER => {
+            ("cancelled", Some("(no text selected)".to_string()))
+        }
         Err(e) => ("failure", Some(e.clone())),
     };
     let _ = history::insert(history::NewEntry {
@@ -569,9 +577,12 @@ pub async fn process_audio<R: Runtime>(
         status: status.to_string(),
     });
     // User-initiated cancel is not an error from the frontend's perspective —
-    // suppress the Err so processAudio doesn't surface it as a failure.
+    // suppress the Err so processAudio doesn't surface it as a failure. The
+    // no-selection early exit is likewise already communicated by the mode's
+    // warn toast, so it returns Ok(empty) to the frontend too.
     match result {
         Err(e) if e == crate::hotkeys::CANCELLED_MARKER => Ok(String::new()),
+        Err(e) if e == command_mode::NO_SELECTION_MARKER => Ok(String::new()),
         other => other,
     }
 }
@@ -628,6 +639,45 @@ async fn run_prompt_mode<R: Runtime>(
             log::error!("prompt mode failed: {e:#}");
             toast::error(app, "Prompt failed", &msg);
             (Err(format!("prompt: {msg}")), false)
+        }
+    }
+}
+
+async fn run_command_mode<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &State<'_, AppState>,
+    transcript: &str,
+    session: u64,
+) -> Result<String, String> {
+    let anthropic_key = state.anthropic_key();
+    // Up-front preflight: fail fast with a specific, actionable toast BEFORE
+    // the selection capture's synthetic Cmd+C touches the user's clipboard or
+    // any HTTP call is made. Never log or surface the key value.
+    if prompt_mode::anthropic_key_missing(&anthropic_key) {
+        log::warn!("command mode aborted: Anthropic API key not configured");
+        toast::error(app, "Command mode unavailable", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST);
+        return Err(format!("command: {}", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST));
+    }
+    match command_mode::run(app, &anthropic_key, transcript, session).await {
+        Ok(outcome) => {
+            // No success toast — the transformed text appears over the
+            // selection the moment it's pasted, exactly like dictation.
+            Ok(outcome.inserted)
+        }
+        Err(e) => {
+            let msg = format!("{e:#}");
+            if msg == crate::hotkeys::CANCELLED_MARKER {
+                log::info!("command cancelled by user (Esc)");
+                return Err(crate::hotkeys::CANCELLED_MARKER.to_string());
+            }
+            if msg == command_mode::NO_SELECTION_MARKER {
+                // Warn toast already fired in the mode; no error toast here.
+                log::info!("command mode: no selection, nothing pasted");
+                return Err(command_mode::NO_SELECTION_MARKER.to_string());
+            }
+            log::error!("command mode failed: {e:#}");
+            toast::error(app, "Command failed", &msg);
+            Err(format!("command: {msg}"))
         }
     }
 }
@@ -861,7 +911,7 @@ fn diagnostics_summary<R: Runtime>(app: &AppHandle<R>) -> String {
          log file: {}\n\
          accessibility_trusted: {ax}\n\
          verbose_logging: {}\n\
-         hotkeys: dictation={} action={} prompt={} cancel={}\n\
+         hotkeys: dictation={} action={} prompt={} command={} cancel={}\n\
          \nNote: transcripts, LLM output and clipboard/selection values are\n\
          redacted in the logs unless verbose logging was enabled.\n",
         env!("CARGO_PKG_VERSION"),
@@ -870,6 +920,7 @@ fn diagnostics_summary<R: Runtime>(app: &AppHandle<R>) -> String {
         settings.hotkeys.dictation,
         settings.hotkeys.action,
         settings.hotkeys.prompt,
+        settings.hotkeys.command,
         settings.hotkeys.cancel,
     )
 }

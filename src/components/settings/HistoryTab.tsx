@@ -8,7 +8,7 @@ import {
 } from "../../lib/settings";
 import { Button, Select } from "./ui";
 
-type ModeFilter = "all" | "dictation" | "prompt" | "action";
+type ModeFilter = "all" | "dictation" | "prompt" | "action" | "command";
 
 export default function HistoryTab() {
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
@@ -121,6 +121,7 @@ export default function HistoryTab() {
             { value: "dictation", label: "Dictation" },
             { value: "prompt", label: "Prompt" },
             { value: "action", label: "Action" },
+            { value: "command", label: "Command" },
           ]}
         />
       </div>

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-export type RecordingMode = "dictation" | "action" | "prompt";
+export type RecordingMode = "dictation" | "action" | "prompt" | "command";
 
 export async function processAudio(
   audioB64: string,

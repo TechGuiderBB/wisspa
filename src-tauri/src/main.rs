@@ -245,6 +245,7 @@ fn main() {
                     &s.hotkeys.dictation,
                     &s.hotkeys.action,
                     &s.hotkeys.prompt,
+                    &s.hotkeys.command,
                 ]);
                 prearm::apply(app.handle(), s.general.fast_recording_start, masks);
             }
