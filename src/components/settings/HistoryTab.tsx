@@ -85,6 +85,19 @@ export default function HistoryTab() {
     return true;
   });
 
+  // Anthropic token metering over the loaded window. The tab loads the most
+  // recent 100 rows, so the summary is honestly labelled "last 100 entries";
+  // rows without captured usage (cancelled/failed runs, pre-metering rows)
+  // contribute nothing. Rendered only when at least one row has token data,
+  // so a pre-migration history doesn't show a misleading 0.
+  const anyTokens = entries.some(
+    (e) => e.input_tokens != null || e.output_tokens != null,
+  );
+  const totalTokens = entries.reduce(
+    (sum, e) => sum + (e.input_tokens ?? 0) + (e.output_tokens ?? 0),
+    0,
+  );
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -93,6 +106,9 @@ export default function HistoryTab() {
             ? `Showing ${filtered.length} of ${entries.length} loaded entries`
             : `Showing ${entries.length} most recent`}{" "}
           · stored locally in <code className="font-mono">history.db</code>
+          {anyTokens && (
+            <> · last 100 entries: {totalTokens.toLocaleString()} tokens</>
+          )}
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" onClick={onExport} disabled={busy}>
@@ -260,6 +276,12 @@ function Row({ entry }: { entry: HistoryEntry }) {
   const editCopyLabel = editCopyFailed ? "Failed" : editCopied ? "Copied" : "Copy edited";
   const reinjectLabel = injecting ? "Pasting…" : injectFailed ? "Failed" : "Paste again";
 
+  // Anthropic token total for the row (input + output, summed across the
+  // mode's LLM calls). Null on both sides = no usage captured (cancelled or
+  // failed runs, rows from before metering) — show nothing rather than "0".
+  const hasTokens = entry.input_tokens != null || entry.output_tokens != null;
+  const totalTokens = (entry.input_tokens ?? 0) + (entry.output_tokens ?? 0);
+
   // NOTE: colSpan={7} must match the 7-column thead above (When, Mode, App, Snippet, ms, Status, Actions).
   return (
     <>
@@ -287,6 +309,14 @@ function Row({ entry }: { entry: HistoryEntry }) {
         <td className="px-3 py-2 text-slate-800">{short || "—"}</td>
         <td className="px-3 py-2 text-right text-slate-500 tabular-nums">
           {entry.duration_ms ?? "—"}
+          {hasTokens && (
+            <div
+              className="text-[10px] text-slate-400"
+              title={`${(entry.input_tokens ?? 0).toLocaleString()} in / ${(entry.output_tokens ?? 0).toLocaleString()} out (Anthropic)`}
+            >
+              {totalTokens.toLocaleString()} tok
+            </div>
+          )}
         </td>
         <td className="px-3 py-2">
           <span

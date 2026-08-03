@@ -23,10 +23,38 @@ const SCHEMA: &str = r#"
       output TEXT,
       action_id TEXT,
       duration_ms INTEGER,
-      status TEXT NOT NULL
+      status TEXT NOT NULL,
+      input_tokens INTEGER,
+      output_tokens INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp DESC);
 "#;
+
+/// Bring an existing history.db up to the current schema. Additive only:
+/// SQLite has no `ADD COLUMN IF NOT EXISTS`, so each column is guarded by a
+/// `pragma_table_info` lookup, and no existing column or row is ever touched.
+/// Rows written before metering existed keep NULL token columns.
+fn migrate(conn: &Connection) -> Result<()> {
+    for (column, ddl) in [
+        (
+            "input_tokens",
+            "ALTER TABLE history ADD COLUMN input_tokens INTEGER",
+        ),
+        (
+            "output_tokens",
+            "ALTER TABLE history ADD COLUMN output_tokens INTEGER",
+        ),
+    ] {
+        let exists = conn
+            .prepare("SELECT 1 FROM pragma_table_info('history') WHERE name = ?1")?
+            .exists(params![column])?;
+        if !exists {
+            conn.execute_batch(ddl)?;
+            log::info!("history.db migrated: added column {column}");
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
@@ -39,6 +67,12 @@ pub struct Entry {
     pub action_id: Option<String>,
     pub duration_ms: Option<i64>,
     pub status: String,
+    /// Anthropic token accounting for the LLM call(s) behind this entry
+    /// (summed when a mode made two calls — prompt rewrite + critique).
+    /// None when no usage was captured: cancelled/failed runs, STT-only rows,
+    /// or rows written before metering existed.
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -50,6 +84,8 @@ pub struct NewEntry {
     pub action_id: Option<String>,
     pub duration_ms: Option<i64>,
     pub status: String,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
 }
 
 fn db_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf> {
@@ -65,6 +101,9 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
     let path = db_path(app)?;
     let conn = Connection::open(&path).with_context(|| format!("open {}", path.display()))?;
     conn.execute_batch(SCHEMA)?;
+    // Existing installs' DBs predate the token columns: add them (no-op on a
+    // fresh DB, where SCHEMA already created them).
+    migrate(&conn)?;
     DB.set(Mutex::new(conn))
         .map_err(|_| anyhow::anyhow!("history DB already initialised"))?;
     log::info!("history.db ready at {}", path.display());
@@ -83,9 +122,16 @@ pub fn insert(entry: NewEntry) -> Result<()> {
         return Err(anyhow::anyhow!("history DB not initialised"));
     };
     let guard = db.lock().map_err(|_| anyhow::anyhow!("history mutex"))?;
-    guard.execute(
-        "INSERT INTO history (timestamp, mode, active_app, raw_transcript, output, action_id, duration_ms, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    insert_into(&guard, entry)
+}
+
+/// Insert against an explicit connection, split out from [`insert`] so the
+/// write path (and its schema assumptions) is unit-testable on an in-memory
+/// DB without touching the process-global one.
+fn insert_into(conn: &Connection, entry: NewEntry) -> Result<()> {
+    conn.execute(
+        "INSERT INTO history (timestamp, mode, active_app, raw_transcript, output, action_id, duration_ms, status, input_tokens, output_tokens)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             now_ms(),
             entry.mode,
@@ -95,9 +141,11 @@ pub fn insert(entry: NewEntry) -> Result<()> {
             entry.action_id,
             entry.duration_ms,
             entry.status,
+            entry.input_tokens,
+            entry.output_tokens,
         ],
     )?;
-    prune(&guard, MAX_HISTORY_ROWS)?;
+    prune(conn, MAX_HISTORY_ROWS)?;
     Ok(())
 }
 
@@ -121,8 +169,13 @@ pub fn recent(limit: i64) -> Result<Vec<Entry>> {
         return Ok(Vec::new());
     };
     let guard = db.lock().map_err(|_| anyhow::anyhow!("history mutex"))?;
-    let mut stmt = guard.prepare(
-        "SELECT id, timestamp, mode, active_app, raw_transcript, output, action_id, duration_ms, status
+    recent_from(&guard, limit)
+}
+
+/// Read against an explicit connection — see [`insert_into`].
+fn recent_from(conn: &Connection, limit: i64) -> Result<Vec<Entry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, timestamp, mode, active_app, raw_transcript, output, action_id, duration_ms, status, input_tokens, output_tokens
          FROM history
          ORDER BY timestamp DESC
          LIMIT ?1",
@@ -139,6 +192,8 @@ pub fn recent(limit: i64) -> Result<Vec<Entry>> {
                 action_id: row.get(6)?,
                 duration_ms: row.get(7)?,
                 status: row.get(8)?,
+                input_tokens: row.get(9)?,
+                output_tokens: row.get(10)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -235,5 +290,123 @@ mod tests {
         insert_n(&conn, 10);
         prune(&conn, MAX_HISTORY_ROWS).expect("prune");
         assert_eq!(row_count(&conn), 10);
+    }
+
+    /// The pre-metering schema: what an existing install's history.db looks
+    /// like before this version's migration runs.
+    const SCHEMA_V1: &str = r#"
+        CREATE TABLE IF NOT EXISTS history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp INTEGER NOT NULL,
+          mode TEXT NOT NULL,
+          active_app TEXT,
+          raw_transcript TEXT NOT NULL,
+          output TEXT,
+          action_id TEXT,
+          duration_ms INTEGER,
+          status TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp DESC);
+    "#;
+
+    fn column_names(conn: &Connection) -> Vec<String> {
+        conn.prepare("SELECT name FROM pragma_table_info('history')")
+            .expect("table_info")
+            .query_map([], |r| r.get(0))
+            .expect("query")
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .expect("collect")
+    }
+
+    #[test]
+    fn migration_adds_token_columns_to_old_schema() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(SCHEMA_V1).expect("create v1 schema");
+        // A row written by the old build must survive the migration untouched.
+        conn.execute(
+            "INSERT INTO history (timestamp, mode, raw_transcript, status)
+             VALUES (1, 'dictation', 'legacy entry', 'success')",
+            [],
+        )
+        .expect("insert legacy row");
+
+        migrate(&conn).expect("migrate");
+        let cols = column_names(&conn);
+        assert!(cols.iter().any(|c| c == "input_tokens"), "cols: {cols:?}");
+        assert!(cols.iter().any(|c| c == "output_tokens"), "cols: {cols:?}");
+
+        // Idempotent: a second run (e.g. next app launch) is a no-op.
+        migrate(&conn).expect("re-migrate must not fail");
+
+        // The legacy row reads back with NULL tokens (no usage was captured).
+        let rows = recent_from(&conn, 10).expect("recent");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].raw_transcript, "legacy entry");
+        assert_eq!(rows[0].input_tokens, None);
+        assert_eq!(rows[0].output_tokens, None);
+    }
+
+    #[test]
+    fn migrated_old_schema_accepts_metered_inserts() {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(SCHEMA_V1).expect("create v1 schema");
+        migrate(&conn).expect("migrate");
+        insert_into(
+            &conn,
+            NewEntry {
+                mode: "prompt".to_string(),
+                raw_transcript: "raw".to_string(),
+                output: Some("rewritten".to_string()),
+                status: "success".to_string(),
+                input_tokens: Some(2100),
+                output_tokens: Some(230),
+                ..Default::default()
+            },
+        )
+        .expect("metered insert into migrated db");
+        let rows = recent_from(&conn, 10).expect("recent");
+        assert_eq!(rows[0].input_tokens, Some(2100));
+        assert_eq!(rows[0].output_tokens, Some(230));
+    }
+
+    #[test]
+    fn insert_round_trips_token_usage() {
+        let conn = test_conn();
+        insert_into(
+            &conn,
+            NewEntry {
+                mode: "dictation".to_string(),
+                raw_transcript: "raw words".to_string(),
+                output: Some("cleaned words".to_string()),
+                status: "success".to_string(),
+                input_tokens: Some(1500),
+                output_tokens: Some(120),
+                ..Default::default()
+            },
+        )
+        .expect("insert");
+        let rows = recent_from(&conn, 10).expect("recent");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].input_tokens, Some(1500));
+        assert_eq!(rows[0].output_tokens, Some(120));
+    }
+
+    #[test]
+    fn insert_without_usage_keeps_tokens_null() {
+        // STT-only / cancelled / pre-LLM-failure rows carry no usage — the
+        // columns must stay NULL, not collapse to a misleading 0.
+        let conn = test_conn();
+        insert_into(
+            &conn,
+            NewEntry {
+                mode: "dictation".to_string(),
+                status: "cancelled".to_string(),
+                ..Default::default()
+            },
+        )
+        .expect("insert");
+        let rows = recent_from(&conn, 10).expect("recent");
+        assert_eq!(rows[0].input_tokens, None);
+        assert_eq!(rows[0].output_tokens, None);
     }
 }

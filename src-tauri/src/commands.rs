@@ -1,5 +1,5 @@
 use crate::{
-    actions::registry, history, hotkeys, keychain, modes::action as action_mode,
+    actions::registry, history, hotkeys, keychain, llm, modes::action as action_mode,
     modes::command as command_mode, modes::dictation, modes::prompt as prompt_mode, permissions,
     settings_store, stt, toast, AppState,
 };
@@ -221,6 +221,7 @@ pub async fn report_recording_timeout<R: Runtime>(
         action_id: None,
         duration_ms: Some(max_seconds as i64 * 1000),
         status: "cancelled".to_string(),
+        ..Default::default()
     });
     toast::warn(&app, "Recording stopped", &format!("Exceeded the {max_seconds}s recording limit."));
     Ok(())
@@ -250,6 +251,7 @@ pub async fn report_silent_recording<R: Runtime>(
         action_id: None,
         duration_ms: Some(duration_ms),
         status: "cancelled".to_string(),
+        ..Default::default()
     });
     // Surface only via the pill flash. The macOS banner was noisy and
     // redundant on top of the in-app indicator.
@@ -532,22 +534,35 @@ pub async fn process_audio<R: Runtime>(
     // action mode returns (text, matched_action_id) so history can record which action ran.
     // prompt mode additionally reports whether it fell back to the raw transcript,
     // so the history row can say so instead of claiming a clean success.
-    let (result, matched_action_id, prompt_fallback): (Result<String, String>, Option<String>, bool) =
-        match mode.as_str() {
-            "action" => {
-                let r = run_action_mode(&app, &transcript, session).await;
-                match r {
-                    Ok((text, aid)) => (Ok(text), aid, false),
-                    Err(e) => (Err(e), None, false),
-                }
+    // `llm_usage` carries the Anthropic token accounting for the run (summed when
+    // the mode made two calls); action mode never calls the LLM, and a cancelled
+    // or pre-LLM failure path reports no usage — the row's columns stay NULL.
+    let (result, matched_action_id, prompt_fallback, llm_usage): (
+        Result<String, String>,
+        Option<String>,
+        bool,
+        llm::TokenUsage,
+    ) = match mode.as_str() {
+        "action" => {
+            let r = run_action_mode(&app, &transcript, session).await;
+            match r {
+                Ok((text, aid)) => (Ok(text), aid, false, llm::TokenUsage::default()),
+                Err(e) => (Err(e), None, false, llm::TokenUsage::default()),
             }
-            "prompt" => {
-                let (r, fallback) = run_prompt_mode(&app, &state, &transcript, session).await;
-                (r, None, fallback)
-            }
-            "command" => (run_command_mode(&app, &state, &transcript, session).await, None, false),
-            _ => (run_dictation_mode(&app, &state, &transcript, session).await, None, false),
-        };
+        }
+        "prompt" => {
+            let (r, fallback, usage) = run_prompt_mode(&app, &state, &transcript, session).await;
+            (r, None, fallback, usage)
+        }
+        "command" => {
+            let (r, usage) = run_command_mode(&app, &state, &transcript, session).await;
+            (r, None, false, usage)
+        }
+        _ => {
+            let (r, usage) = run_dictation_mode(&app, &state, &transcript, session).await;
+            (r, None, false, usage)
+        }
+    };
     let duration_ms = started.elapsed().as_millis() as i64;
     let active_app = crate::app_detector::frontmost_app_name().await.ok();
     let (status, output) = match &result {
@@ -575,6 +590,8 @@ pub async fn process_audio<R: Runtime>(
         action_id: matched_action_id,
         duration_ms: Some(duration_ms),
         status: status.to_string(),
+        input_tokens: llm_usage.input_tokens.map(|v| v as i64),
+        output_tokens: llm_usage.output_tokens.map(|v| v as i64),
     });
     // User-initiated cancel is not an error from the frontend's perspective —
     // suppress the Err so processAudio doesn't surface it as a failure. The
@@ -589,13 +606,13 @@ pub async fn process_audio<R: Runtime>(
 
 /// Returns the pipeline result plus whether the run fell back to the raw
 /// transcript (rewrite failed or empty) — the caller records that distinction
-/// in the history row's status.
+/// in the history row's status — plus the run's Anthropic token usage.
 async fn run_prompt_mode<R: Runtime>(
     app: &AppHandle<R>,
     state: &State<'_, AppState>,
     transcript: &str,
     session: u64,
-) -> (Result<String, String>, bool) {
+) -> (Result<String, String>, bool, llm::TokenUsage) {
     let anthropic_key = state.anthropic_key();
     // Up-front preflight: if there's no Anthropic key, fail fast with a
     // specific, actionable toast BEFORE app detection / selection capture
@@ -606,11 +623,13 @@ async fn run_prompt_mode<R: Runtime>(
         return (
             Err(format!("prompt: {}", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST)),
             false,
+            llm::TokenUsage::default(),
         );
     }
     match prompt_mode::run(app, &anthropic_key, transcript, session).await {
         Ok(outcome) => {
             let fallback = outcome.used_fallback;
+            let usage = outcome.usage;
             let preview = preview(&outcome.inserted);
             let mut suffix = Vec::new();
             if outcome.selection_captured {
@@ -628,17 +647,21 @@ async fn run_prompt_mode<R: Runtime>(
             // app the moment it's pasted. Banner was redundant noise. The
             // fallback warning toast already fired in prompt_mode::run.
             let _ = body;
-            (Ok(outcome.inserted), fallback)
+            (Ok(outcome.inserted), fallback, usage)
         }
         Err(e) => {
             let msg = format!("{e:#}");
             if msg == crate::hotkeys::CANCELLED_MARKER {
                 log::info!("prompt cancelled by user (Esc)");
-                return (Err(crate::hotkeys::CANCELLED_MARKER.to_string()), false);
+                return (
+                    Err(crate::hotkeys::CANCELLED_MARKER.to_string()),
+                    false,
+                    llm::TokenUsage::default(),
+                );
             }
             log::error!("prompt mode failed: {e:#}");
             toast::error(app, "Prompt failed", &msg);
-            (Err(format!("prompt: {msg}")), false)
+            (Err(format!("prompt: {msg}")), false, llm::TokenUsage::default())
         }
     }
 }
@@ -648,7 +671,7 @@ async fn run_command_mode<R: Runtime>(
     state: &State<'_, AppState>,
     transcript: &str,
     session: u64,
-) -> Result<String, String> {
+) -> (Result<String, String>, llm::TokenUsage) {
     let anthropic_key = state.anthropic_key();
     // Up-front preflight: fail fast with a specific, actionable toast BEFORE
     // the selection capture's synthetic Cmd+C touches the user's clipboard or
@@ -656,28 +679,37 @@ async fn run_command_mode<R: Runtime>(
     if prompt_mode::anthropic_key_missing(&anthropic_key) {
         log::warn!("command mode aborted: Anthropic API key not configured");
         toast::error(app, "Command mode unavailable", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST);
-        return Err(format!("command: {}", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST));
+        return (
+            Err(format!("command: {}", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST)),
+            llm::TokenUsage::default(),
+        );
     }
     match command_mode::run(app, &anthropic_key, transcript, session).await {
         Ok(outcome) => {
             // No success toast — the transformed text appears over the
             // selection the moment it's pasted, exactly like dictation.
-            Ok(outcome.inserted)
+            (Ok(outcome.inserted), outcome.usage)
         }
         Err(e) => {
             let msg = format!("{e:#}");
             if msg == crate::hotkeys::CANCELLED_MARKER {
                 log::info!("command cancelled by user (Esc)");
-                return Err(crate::hotkeys::CANCELLED_MARKER.to_string());
+                return (
+                    Err(crate::hotkeys::CANCELLED_MARKER.to_string()),
+                    llm::TokenUsage::default(),
+                );
             }
             if msg == command_mode::NO_SELECTION_MARKER {
                 // Warn toast already fired in the mode; no error toast here.
                 log::info!("command mode: no selection, nothing pasted");
-                return Err(command_mode::NO_SELECTION_MARKER.to_string());
+                return (
+                    Err(command_mode::NO_SELECTION_MARKER.to_string()),
+                    llm::TokenUsage::default(),
+                );
             }
             log::error!("command mode failed: {e:#}");
             toast::error(app, "Command failed", &msg);
-            Err(format!("command: {msg}"))
+            (Err(format!("command: {msg}")), llm::TokenUsage::default())
         }
     }
 }
@@ -687,7 +719,7 @@ async fn run_dictation_mode<R: Runtime>(
     state: &State<'_, AppState>,
     transcript: &str,
     session: u64,
-) -> Result<String, String> {
+) -> (Result<String, String>, llm::TokenUsage) {
     let anthropic_key = state.anthropic_key();
     match dictation::run(app, &anthropic_key, transcript, session).await {
         Ok(outcome) => {
@@ -701,17 +733,20 @@ async fn run_dictation_mode<R: Runtime>(
             } else if outcome.long_transcript {
                 toast::warn(app, "Inserted (long)", &format!("Transcript >2000 chars. {preview}"));
             }
-            Ok(outcome.inserted)
+            (Ok(outcome.inserted), outcome.usage)
         }
         Err(e) => {
             let msg = format!("{e:#}");
             if msg == crate::hotkeys::CANCELLED_MARKER {
                 log::info!("dictation cancelled by user (Esc) or superseded");
-                return Err(crate::hotkeys::CANCELLED_MARKER.to_string());
+                return (
+                    Err(crate::hotkeys::CANCELLED_MARKER.to_string()),
+                    llm::TokenUsage::default(),
+                );
             }
             log::error!("dictation pipeline failed: {e:#}");
             toast::error(app, "Insertion failed", &msg);
-            Err(format!("dictation: {msg}"))
+            (Err(format!("dictation: {msg}")), llm::TokenUsage::default())
         }
     }
 }

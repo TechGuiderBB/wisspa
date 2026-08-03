@@ -15,6 +15,8 @@ pub const NO_SELECTION_TOAST: &str = "No text selected — select text first";
 pub struct CommandOutcome {
     /// Final text pasted over the user's selection.
     pub inserted: String,
+    /// Anthropic token accounting for the transform call.
+    pub usage: crate::llm::TokenUsage,
 }
 
 /// Command Mode pipeline:
@@ -81,14 +83,17 @@ pub async fn run<R: Runtime>(
         }
         r = llm::command_transform(anthropic_api_key, raw_transcript, &selected_text) => r,
     };
-    let final_text = transform_or_error(transform)?;
+    let (final_text, usage) = transform_or_error(transform)?;
 
     // Paste over the still-active selection in the press-time app. The
     // selection capture (Cmd+C + clipboard restore) leaves the selection
     // intact, so the injector's Cmd+V replaces exactly the captured text.
     injector::inject_text(app, &final_text, Some(&active_app), session).await?;
 
-    Ok(CommandOutcome { inserted: final_text })
+    Ok(CommandOutcome {
+        inserted: final_text,
+        usage,
+    })
 }
 
 /// Fold the LLM result into the text to paste. A successful, non-empty
@@ -96,9 +101,9 @@ pub async fn run<R: Runtime>(
 /// pasting empty text would DELETE the user's selection, and silently pasting
 /// the original back would pretend the command ran — an honest failure beats
 /// both (nothing is pasted, so there is nothing to undo).
-fn transform_or_error(transform: Result<String>) -> Result<String> {
+fn transform_or_error(transform: Result<(String, crate::llm::TokenUsage)>) -> Result<(String, crate::llm::TokenUsage)> {
     match transform {
-        Ok(text) if !text.trim().is_empty() => Ok(text),
+        Ok((text, usage)) if !text.trim().is_empty() => Ok((text, usage)),
         Ok(_) => {
             log::warn!("command transform returned empty — not pasting");
             Err(anyhow::anyhow!("command transform returned empty"))
@@ -111,9 +116,13 @@ fn transform_or_error(transform: Result<String>) -> Result<String> {
 mod tests {
     use super::{transform_or_error, NO_SELECTION_MARKER, NO_SELECTION_TOAST};
 
+    fn ok_transform(text: &str) -> anyhow::Result<(String, crate::llm::TokenUsage)> {
+        Ok((text.to_string(), crate::llm::TokenUsage::default()))
+    }
+
     #[test]
     fn successful_transform_is_used_verbatim() {
-        let out = transform_or_error(Ok("Bonjour le monde.".to_string())).expect("transform");
+        let (out, _usage) = transform_or_error(ok_transform("Bonjour le monde.")).expect("transform");
         assert_eq!(out, "Bonjour le monde.");
     }
 
@@ -122,7 +131,7 @@ mod tests {
         // Pasting empty text would delete the user's selection — the worst
         // possible outcome. Empty output must surface as a failure instead.
         for empty in ["", "   \n\t  "] {
-            let err = transform_or_error(Ok(empty.to_string()));
+            let err = transform_or_error(ok_transform(empty));
             assert!(err.is_err(), "empty transform {empty:?} must not paste");
         }
     }

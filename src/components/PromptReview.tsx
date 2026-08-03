@@ -10,21 +10,26 @@ type ReviewOpen = {
   session: number;
   text: string;
   app: string;
-  branch: string;
+  /** "prompt" or "dictation"; absent from older backend builds (treat as prompt). */
+  mode?: string;
+  /** Prompt mode's branch split; null for dictation. */
+  branch?: string | null;
 };
 
 /**
  * Edit-before-insert review window (#review). The backend pauses Prompt Mode
- * after Sonnet's rewrite and shows this window; nothing is pasted until the user
- * approves. Insert sends the edited text back to resume the paste; Cancel (and
- * Esc) abort it. Keyed by recording session so a superseded recording's reopen
- * never shows stale text and a late submit for a stale session is a backend
- * no-op.
+ * after Sonnet's rewrite — or dictation after the Haiku cleanup when
+ * `dictation.review_before_insert` is on — and shows this window; nothing is
+ * pasted until the user approves. Insert sends the edited text back to resume
+ * the paste; Cancel (and Esc) abort it. Keyed by recording session so a
+ * superseded recording's reopen never shows stale text and a late submit for
+ * a stale session is a backend no-op.
  */
 export default function PromptReview() {
   const [session, setSession] = useState(0);
   const [text, setText] = useState("");
   const [appLabel, setAppLabel] = useState("");
+  const [mode, setMode] = useState("prompt");
   const [branch, setBranch] = useState("");
   // Guards against a double-click (or Enter + click) resolving twice. The
   // backend is idempotent, but this keeps the UI honest.
@@ -55,6 +60,7 @@ export default function PromptReview() {
       setSession(p.session);
       setText(p.text ?? "");
       setAppLabel(p.app ?? "");
+      setMode(p.mode ?? "prompt");
       setBranch(p.branch ?? "");
       setSubmitting(false);
       // Focus the textarea so the user can edit immediately. Defer to after the
@@ -125,7 +131,10 @@ export default function PromptReview() {
     }
   }
 
-  const branchLabel = branch === "content" ? "content" : "prompt";
+  const isDictation = mode === "dictation";
+  const title = isDictation ? "Review dictation" : "Review prompt";
+  // Dictation has no branch split — show the chip only when a branch arrived.
+  const branchLabel = branch === "content" ? "content" : branch === "prompt" ? "prompt" : "";
 
   return (
     <div
@@ -133,17 +142,21 @@ export default function PromptReview() {
       onKeyDown={onKeyDown}
     >
       <header className="flex items-baseline gap-2 px-4 pt-3 pb-2 border-b border-neutral-200">
-        <h1 className="text-sm font-semibold tracking-tight">Review prompt</h1>
+        <h1 className="text-sm font-semibold tracking-tight">{title}</h1>
         {appLabel && (
           <span className="text-xs text-neutral-500 truncate">
             → {appLabel}
-            <span className="text-neutral-400"> · {branchLabel}</span>
+            {branchLabel && (
+              <span className="text-neutral-400"> · {branchLabel}</span>
+            )}
           </span>
         )}
       </header>
 
       <label htmlFor="prompt-review-text" className="sr-only">
-        Generated prompt — edit before inserting
+        {isDictation
+          ? "Cleaned dictation — edit before inserting"
+          : "Generated prompt — edit before inserting"}
       </label>
       <textarea
         id="prompt-review-text"
@@ -153,7 +166,11 @@ export default function PromptReview() {
         spellCheck={false}
         autoFocus
         className="flex-1 w-full resize-none px-4 py-3 text-sm font-mono leading-relaxed text-neutral-800 outline-none overflow-auto"
-        placeholder="The generated prompt will appear here."
+        placeholder={
+          isDictation
+            ? "The cleaned dictation will appear here."
+            : "The generated prompt will appear here."
+        }
       />
 
       <footer className="flex items-center justify-between gap-3 px-4 py-3 border-t border-neutral-200">

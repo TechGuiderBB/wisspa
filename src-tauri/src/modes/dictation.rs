@@ -1,4 +1,4 @@
-use crate::{app_detector, ax_snapshot, injector, learning, llm, settings_store, toast};
+use crate::{app_detector, ax_snapshot, injector, learning, llm, prompt_review, settings_store, toast};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -20,6 +20,10 @@ pub struct DictationOutcome {
     /// that we discarded it and used the raw text instead (guardrail
     /// against Haiku answering questions / rewriting prompts).
     pub haiku_diverged: bool,
+    /// Token accounting for the Haiku cleanup call (history metering).
+    /// Default (no usage) when the cleanup call itself failed — even when its
+    /// output was discarded as diverged, the call still consumed tokens.
+    pub usage: llm::TokenUsage,
 }
 
 /// Phase 2 dictation pipeline:
@@ -90,9 +94,9 @@ pub async fn run<R: Runtime>(
             profile.map(|p| p.tone.as_str()),
         ) => r,
     };
-    let (final_text, cleaned, haiku_diverged) =
+    let (final_text, cleaned, haiku_diverged, usage) =
         match cleanup {
-            Ok(haiku_out) => {
+            Ok((haiku_out, usage)) => {
                 // Compare against the text Haiku actually saw (the corrected
                 // transcript). Using the raw transcript here would flag the
                 // user's own corrections as "divergence" and discard them.
@@ -102,18 +106,48 @@ pub async fn run<R: Runtime>(
                         crate::redact::redact(&corrected_transcript),
                         crate::redact::redact(&haiku_out)
                     );
-                    (corrected_transcript.clone(), false, true)
+                    (corrected_transcript.clone(), false, true, usage)
                 } else {
-                    (haiku_out, true, false)
+                    (haiku_out, true, false, usage)
                 }
             }
             Err(e) => {
                 log::error!("Haiku cleanup failed, falling back to corrected transcript: {e:#}");
-                (corrected_transcript.clone(), false, false)
+                (
+                    corrected_transcript.clone(),
+                    false,
+                    false,
+                    llm::TokenUsage::default(),
+                )
             }
         };
 
-    injector::inject_text(app, &final_text, Some(&active_app), session).await?;
+    // Edit-before-insert review (opt-in via `dictation.review_before_insert`,
+    // default off): route the cleaned text through the same session-keyed
+    // review window prompt mode uses — nothing is pasted until the user
+    // approves, and Cancel/Esc aborts like any other cancellation. With the
+    // gate off the pipeline pastes immediately, byte-for-byte unchanged.
+    let review_before_insert = settings
+        .as_ref()
+        .map(|s| s.dictation.review_before_insert)
+        .unwrap_or(false);
+    let (final_text, inject_to): (String, Option<String>) = if review_before_insert {
+        let focus_target = dictation_review_focus_target(app_detected, &active_app);
+        let reviewed = prompt_review::gate(
+            app,
+            session,
+            &final_text,
+            &active_app,
+            prompt_review::ReviewMode::Dictation,
+            None,
+        )
+        .await?;
+        (reviewed, focus_target)
+    } else {
+        (final_text, Some(active_app.clone()))
+    };
+
+    injector::inject_text(app, &final_text, inject_to.as_deref(), session).await?;
 
     crate::sounds::play(app, crate::sounds::Cue::Complete);
 
@@ -140,7 +174,20 @@ pub async fn run<R: Runtime>(
         cleaned,
         long_transcript,
         haiku_diverged,
+        usage,
     })
+}
+
+/// The app to re-activate before pasting a reviewed dictation. The review
+/// window steals focus, so a real detection must be brought back forward —
+/// but when detection failed there is no target to activate (the "a macOS app"
+/// placeholder would hard-fail the activation and discard the user's edited
+/// text), matching prompt mode's manual-override stance.
+fn dictation_review_focus_target(app_detected: bool, active_app: &str) -> Option<String> {
+    prompt_review::review_focus_target(
+        if app_detected { Some(active_app) } else { None },
+        None,
+    )
 }
 
 /// Replace auto-apply corrections in `text`. Matches are case-insensitive and
@@ -290,5 +337,27 @@ async fn snapshot_and_learn<R: Runtime>(
             Ok(_) => {}
             Err(e) => log::warn!("auto-learn: record_correction failed: {e:#}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dictation_review_focus_target;
+
+    #[test]
+    fn review_focus_target_uses_the_detected_app() {
+        // The review window steals focus, so the detected target must be
+        // re-activated before the paste.
+        assert_eq!(
+            dictation_review_focus_target(true, "Slack"),
+            Some("Slack".to_string())
+        );
+    }
+
+    #[test]
+    fn review_focus_target_is_none_when_detection_failed() {
+        // The "a macOS app" fallback placeholder must never be activated: the
+        // hard activation error would discard the user's edited text.
+        assert_eq!(dictation_review_focus_target(false, "a macOS app"), None);
     }
 }
