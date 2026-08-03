@@ -106,3 +106,42 @@ jobs:
             --exclude node_modules --exclude src-tauri/target --exclude dist --exclude src-tauri/gen \
             --severity ERROR --severity WARNING \
             .
+
+  cargo-test:
+    name: cargo test
+    # macOS is required: the clipboard snapshot/restore tests drive NSPasteboard
+    # directly (clipboard.rs), which only exists on macOS.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-test-
+      - name: Run tests
+        run: |
+          cd src-tauri
+          cargo test --locked
+
+  frontend-typecheck:
+    name: frontend typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # package.json has no dedicated typecheck script; this checks the app
+      # sources (tsconfig.json is noEmit). `pnpm build` remains the full gate.
+      - run: pnpm exec tsc --noEmit
