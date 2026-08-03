@@ -41,6 +41,36 @@ struct Usage {
     cache_read_input_tokens: Option<u64>,
 }
 
+/// Token accounting from a single Anthropic call, carried out of the pipeline
+/// so history can persist it. Both sides optional: `usage` itself is
+/// deserialised defensively and a missing field must never fail a call.
+/// Cache creation/read tokens are logged at debug but deliberately NOT folded
+/// into `input_tokens` — keep the persisted number the plain API figure.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+
+impl TokenUsage {
+    /// Fold a second call's usage into this one. Prompt mode makes two Sonnet
+    /// calls (rewrite + critique) that share a single history row, so their
+    /// tokens are summed; each side stays None only when neither call
+    /// reported it.
+    pub fn fold(&mut self, other: TokenUsage) {
+        self.input_tokens = sum_opt(self.input_tokens, other.input_tokens);
+        self.output_tokens = sum_opt(self.output_tokens, other.output_tokens);
+    }
+}
+
+fn sum_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x + y),
+        (Some(x), None) => Some(x),
+        (None, y) => y,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ContentBlock {
     #[serde(rename = "type")]
@@ -95,12 +125,13 @@ impl AnthropicParams {
 /// `profile_tone` is the matched per-app profile's free-text tone guidance, if any.
 /// On 429/5xx errors, retries once (shared policy in retry.rs). Other failures
 /// bubble up so the caller can fall back to the raw transcript per PRD §5.1.
+/// Returns the cleaned text plus the call's token usage (for history metering).
 pub async fn haiku_cleanup_dictation(
     api_key: &str,
     transcript: &str,
     active_app: &str,
     profile_tone: Option<&str>,
-) -> Result<String> {
+) -> Result<(String, TokenUsage)> {
     let system_prompt = haiku_system_prompt(active_app, profile_tone);
     call_anthropic(api_key, AnthropicParams::haiku_cleanup(), &system_prompt, transcript).await
 }
@@ -295,6 +326,7 @@ fn build_user_message(
 /// active tab URL + title could be read. Sonnet uses URL + title as the
 /// primary signal for deciding whether to output a prompt (AI-tool
 /// destination) or the finished content (non-AI destination like Gmail).
+/// Returns the rewritten text plus the call's token usage (history metering).
 pub async fn sonnet_prompt_rewrite(
     api_key: &str,
     transcript: &str,
@@ -302,7 +334,7 @@ pub async fn sonnet_prompt_rewrite(
     browser_context: Option<&crate::app_detector::BrowserContext>,
     selected_text: &str,
     user_profile: &str,
-) -> Result<String> {
+) -> Result<(String, TokenUsage)> {
     let user_message =
         build_user_message(active_app, browser_context, selected_text, user_profile, transcript);
     call_anthropic(
@@ -319,7 +351,8 @@ pub async fn sonnet_prompt_rewrite(
 /// rewrite saw, plus the draft in a `<draft>` block. Uses the same Sonnet
 /// params as the rewrite — the static critique system prompt rides the same
 /// prompt-cache path as the other templates. Callers treat a failure as
-/// "keep the first draft" (refinement is upside-only).
+/// "keep the first draft" (refinement is upside-only). Returns the refined
+/// text plus the call's token usage (history metering).
 pub async fn sonnet_critique_refine(
     api_key: &str,
     transcript: &str,
@@ -328,7 +361,7 @@ pub async fn sonnet_critique_refine(
     selected_text: &str,
     user_profile: &str,
     draft: &str,
-) -> Result<String> {
+) -> Result<(String, TokenUsage)> {
     let inputs =
         build_user_message(active_app, browser_context, selected_text, user_profile, transcript);
     let draft_block = wrap_draft(draft);
@@ -365,7 +398,7 @@ pub async fn command_transform(
     api_key: &str,
     instruction: &str,
     selected_text: &str,
-) -> Result<String> {
+) -> Result<(String, TokenUsage)> {
     let user_message = build_command_user_message(instruction, selected_text);
     call_anthropic(
         api_key,
@@ -405,7 +438,7 @@ async fn call_anthropic(
     params: AnthropicParams,
     system: &str,
     user_message: &str,
-) -> Result<String> {
+) -> Result<(String, TokenUsage)> {
     if api_key.is_empty() {
         return Err(anyhow!("ANTHROPIC_API_KEY is empty"));
     }
@@ -430,9 +463,9 @@ async fn call_anthropic(
         if status.is_success() {
             let parsed: AnthropicResponse =
                 res.json().await.context("Anthropic response parse")?;
-            // No dedicated usage path exists yet; debug-level so cache
-            // hit/miss is observable in verbose diagnostics without logging
-            // any content.
+            // Cache hit/miss stays observable at debug level (no content);
+            // the plain input/output figures are returned to the caller so
+            // history can meter them.
             if let Some(usage) = &parsed.usage {
                 log::debug!(
                     "Anthropic {} usage: {} in / {} out (cache write {}, cache read {})",
@@ -443,13 +476,20 @@ async fn call_anthropic(
                     usage.cache_read_input_tokens.unwrap_or(0),
                 );
             }
+            let usage = parsed
+                .usage
+                .map(|u| TokenUsage {
+                    input_tokens: u.input_tokens,
+                    output_tokens: u.output_tokens,
+                })
+                .unwrap_or_default();
             let text = parsed
                 .content
                 .into_iter()
                 .find(|b| b.block_type == "text")
                 .and_then(|b| b.text)
                 .ok_or_else(|| anyhow!("no text block in Anthropic response"))?;
-            return Ok(text.trim().to_string());
+            return Ok((text.trim().to_string(), usage));
         }
 
         // Retry once on 429 or 5xx per PRD §7.2 (shared policy in retry.rs).
@@ -854,6 +894,41 @@ mod tests {
         assert_eq!(body["model"], HAIKU_MODEL);
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["messages"][0]["content"], "hello");
+    }
+
+    #[test]
+    fn token_usage_fold_sums_two_calls() {
+        // Prompt mode's rewrite + critique share one history row: summed.
+        let mut total = TokenUsage {
+            input_tokens: Some(1200),
+            output_tokens: Some(150),
+        };
+        total.fold(TokenUsage {
+            input_tokens: Some(900),
+            output_tokens: Some(80),
+        });
+        assert_eq!(
+            total,
+            TokenUsage {
+                input_tokens: Some(2100),
+                output_tokens: Some(230),
+            }
+        );
+    }
+
+    #[test]
+    fn token_usage_fold_keeps_none_only_when_neither_call_reported() {
+        let mut total = TokenUsage::default();
+        total.fold(TokenUsage {
+            input_tokens: Some(50),
+            output_tokens: None,
+        });
+        assert_eq!(total.input_tokens, Some(50));
+        assert_eq!(total.output_tokens, None);
+
+        let mut empty = TokenUsage::default();
+        empty.fold(TokenUsage::default());
+        assert_eq!(empty, TokenUsage::default());
     }
 
     #[test]

@@ -44,9 +44,10 @@ type Props = {
   settings: Settings;
   patch: (p: Partial<Settings["general"]>) => void;
   patchStt: (p: Partial<Settings["stt"]>) => void;
+  patchDictation: (p: Partial<Settings["dictation"]>) => void;
 };
 
-export default function GeneralTab({ settings, patch, patchStt }: Props) {
+export default function GeneralTab({ settings, patch, patchStt, patchDictation }: Props) {
   const g = settings.general;
   const stt = settings.stt;
   // distil-whisper is English-only: warn when it's paired with a pinned
@@ -199,6 +200,17 @@ export default function GeneralTab({ settings, patch, patchStt }: Props) {
             { value: "press_and_hold", label: "Press & hold" },
             { value: "toggle", label: "Toggle" },
           ]}
+        />
+      </Row>
+
+      <Row
+        label="Review dictation before insert"
+        hint="Opens an editable window with the cleaned dictation; nothing is pasted until you approve. Same review window as Prompt Mode."
+      >
+        <Toggle
+          checked={settings.dictation.review_before_insert}
+          onChange={(v) => patchDictation({ review_before_insert: v })}
+          label="Review dictation before insert"
         />
       </Row>
 

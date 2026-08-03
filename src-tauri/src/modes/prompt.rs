@@ -1,50 +1,11 @@
 use crate::{app_detector, injector, llm, prompt_review, selection, settings_store, toast};
 use anyhow::Result;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 
 /// Routing-transparency event consumed by the recording overlay + main window.
 /// Matches the frontend `PROMPT_ROUTE_EVENT` in `src/lib/promptRoute.ts`.
 pub const EVENT_PROMPT_ROUTE: &str = "wisspa://prompt-route";
-
-/// Edit-before-insert event consumed by the `review` window. Matches the
-/// frontend listener in `src/components/PromptReview.tsx`.
-pub const EVENT_PROMPT_REVIEW_OPEN: &str = "wisspa://prompt-review-open";
-
-/// Payload for `EVENT_PROMPT_REVIEW_OPEN`. Field names mirror the frontend
-/// `PromptReviewOpen` type exactly (serde keeps these lowercase names).
-#[derive(serde::Serialize, Clone)]
-struct PromptReviewPayload {
-    /// Recording session id; the window keys its state by this so a superseded
-    /// recording can't paste through a stale review (issue #31).
-    session: u64,
-    /// Sonnet's generated prompt, shown in the editable textarea.
-    text: String,
-    /// Resolved destination app, shown in the window header.
-    app: String,
-    /// "prompt" or "content" — same Branch A/B split as the routing chip.
-    branch: &'static str,
-}
-
-/// Show + focus the review window so the user can edit the generated prompt.
-/// A missing window is logged, not fatal: the pipeline still awaits the decision
-/// and the user can abort with the global Esc cancel hotkey.
-fn show_review_window<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(w) = app.get_webview_window("review") {
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_focus();
-    } else {
-        log::warn!("review window missing; awaiting decision (cancel via Esc)");
-    }
-}
-
-/// Hide the review window once the user has acted (or the session aborted).
-fn hide_review_window<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(w) = app.get_webview_window("review") {
-        let _ = w.hide();
-    }
-}
 
 /// User-facing toast body shown when Prompt Mode is triggered with no Anthropic
 /// key configured. Names the provider and the exact Settings destination so the
@@ -234,6 +195,10 @@ pub struct PromptOutcome {
     /// transcript was inserted instead — mirrors dictation's `cleaned = false`,
     /// and lets history record that a fallback happened.
     pub used_fallback: bool,
+    /// Token accounting for the Sonnet call(s) this run made — the critique
+    /// pass is folded in (summed) so one history row carries the run total.
+    /// Default (no usage) when the rewrite call itself failed.
+    pub usage: llm::TokenUsage,
 }
 
 /// Chatbot openers the Sonnet system prompt's Output contract forbids but the
@@ -441,11 +406,19 @@ pub async fn run<R: Runtime>(
         ) => r,
     };
 
+    // Split the token accounting out of the result so the text-only pipeline
+    // below (preamble guard → refine → fallback) keeps its shape; a failed
+    // rewrite carries no usage, and the critique pass folds its own in below.
+    let mut llm_usage = rewrite
+        .as_ref()
+        .ok()
+        .map(|(_, usage)| *usage)
+        .unwrap_or_default();
     // Output guard: strip any chatbot preamble the system prompt failed to
     // suppress. Runs before the fallback check, so a rewrite the guard empties
     // (preamble only, nothing substantive) takes the same raw-transcript path
     // as a natively empty one.
-    let rewrite = rewrite.map(|text| strip_leading_preamble(&text));
+    let rewrite = rewrite.map(|(text, _)| strip_leading_preamble(&text));
 
     // Adaptive second pass (pm.adaptive_refine, default on): for COMPLEX
     // transcripts, a critique call checks the draft against the quality bar and
@@ -478,8 +451,13 @@ pub async fn run<R: Runtime>(
             };
             // The refined output passes through the same preamble guard as the
             // first draft; if that empties it, refine_or_draft keeps the draft.
+            // The critique's tokens fold into the run total — one history row
+            // per recording carries the two Sonnet calls summed.
+            if let Ok((_, critique_usage)) = &refined {
+                llm_usage.fold(*critique_usage);
+            }
             Ok(refine_or_draft(
-                refined.map(|text| strip_leading_preamble(&text)),
+                refined.map(|(text, _)| strip_leading_preamble(&text)),
                 draft,
             ))
         }
@@ -504,55 +482,24 @@ pub async fn run<R: Runtime>(
         // Edit-before-insert review (PRD §0 backlog): pause the pipeline and show
         // the generated prompt in an editable window; nothing is pasted until the
         // user approves. Review supersedes the passive preview toast — an
-        // interactive gate makes a timed auto-paste redundant.
+        // interactive gate makes a timed auto-paste redundant. The gate is shared
+        // with dictation mode (`prompt_review::gate`).
         //
         // The review window steals focus, so restore the user's real target
         // before pasting: inject target (auto) wins, else the press-time app
         // (manual override), else nothing (no regression).
         let focus_target =
             prompt_review::review_focus_target(inject_target.as_deref(), press_app.as_deref());
-        let rx = prompt_review::register(session);
-
-        let _ = app.emit(
-            EVENT_PROMPT_REVIEW_OPEN,
-            PromptReviewPayload {
-                session,
-                text: rewritten.clone(),
-                app: active_app.clone(),
-                branch: classify_branch(&active_app, route_host.as_deref()),
-            },
-        );
-        // Redact the prompt body: it must never hit the log file in cleartext
-        // unless the user opted into verbose logging (issue #33).
-        log::info!(
-            "prompt review opened (session {session}): {}",
-            crate::redact::redact(&rewritten)
-        );
-        show_review_window(app);
-
-        // Wait for the user's decision, but bail immediately if this session is
-        // cancelled (Esc) or superseded by a newer recording. `biased` makes the
-        // abort branch win a tie against a simultaneous submit (issue #31).
-        let decision = tokio::select! {
-            biased;
-            _ = crate::session::aborted(session) => {
-                prompt_review::clear(session);
-                hide_review_window(app);
-                log::info!("prompt review cancelled (session {session})");
-                return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
-            }
-            r = rx => match r {
-                Ok(d) => d,
-                // Sender dropped (cleared/superseded) → treat as cancel.
-                Err(_) => prompt_review::ReviewDecision::Cancel,
-            },
-        };
-        hide_review_window(app);
-
-        // Cancel — or a whitespace-only edit — yields CANCELLED_MARKER, so `?`
-        // aborts before any paste, exactly like an Esc.
-        let final_text = prompt_review::decision_to_text(decision)?;
-        (final_text, focus_target)
+        let reviewed = prompt_review::gate(
+            app,
+            session,
+            &rewritten,
+            &active_app,
+            prompt_review::ReviewMode::Prompt,
+            Some(classify_branch(&active_app, route_host.as_deref())),
+        )
+        .await?;
+        (reviewed, focus_target)
     } else {
         // Preview-before-insert: PRD §5.3 step 6. If enabled, show a toast with
         // the first 50 chars and wait the configured timeout before pasting.
@@ -593,6 +540,7 @@ pub async fn run<R: Runtime>(
         selection_captured,
         manual_app_override_used: manual_override_used,
         used_fallback,
+        usage: llm_usage,
     })
 }
 
