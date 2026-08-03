@@ -8,6 +8,26 @@ use tauri::{AppHandle, Manager, Runtime};
 
 static DB: OnceCell<Mutex<Connection>> = OnceCell::new();
 
+/// Storage cap for the history table: the most recent 1000 rows are kept and
+/// older rows are pruned on every insert. Fixed on purpose — no settings UI;
+/// the display limit (100 rows) lives in the frontend's `getHistory(100)` call.
+const MAX_HISTORY_ROWS: i64 = 1000;
+
+const SCHEMA: &str = r#"
+    CREATE TABLE IF NOT EXISTS history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      timestamp INTEGER NOT NULL,
+      mode TEXT NOT NULL,
+      active_app TEXT,
+      raw_transcript TEXT NOT NULL,
+      output TEXT,
+      action_id TEXT,
+      duration_ms INTEGER,
+      status TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp DESC);
+"#;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entry {
     pub id: i64,
@@ -44,22 +64,7 @@ fn db_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf> {
 pub fn initialize<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
     let path = db_path(app)?;
     let conn = Connection::open(&path).with_context(|| format!("open {}", path.display()))?;
-    conn.execute_batch(
-        r#"
-        CREATE TABLE IF NOT EXISTS history (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          timestamp INTEGER NOT NULL,
-          mode TEXT NOT NULL,
-          active_app TEXT,
-          raw_transcript TEXT NOT NULL,
-          output TEXT,
-          action_id TEXT,
-          duration_ms INTEGER,
-          status TEXT NOT NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_history_timestamp ON history(timestamp DESC);
-        "#,
-    )?;
+    conn.execute_batch(SCHEMA)?;
     DB.set(Mutex::new(conn))
         .map_err(|_| anyhow::anyhow!("history DB already initialised"))?;
     log::info!("history.db ready at {}", path.display());
@@ -92,6 +97,22 @@ pub fn insert(entry: NewEntry) -> Result<()> {
             entry.status,
         ],
     )?;
+    prune(&guard, MAX_HISTORY_ROWS)?;
+    Ok(())
+}
+
+/// Delete all but the newest `max` rows. "Oldest" is decided by `id` (the
+/// AUTOINCREMENT primary key), i.e. insertion order — ties in `timestamp`
+/// (same-millisecond inserts) can't prune the wrong row.
+fn prune(conn: &Connection, max: i64) -> Result<()> {
+    let deleted = conn.execute(
+        "DELETE FROM history
+         WHERE id NOT IN (SELECT id FROM history ORDER BY id DESC LIMIT ?1)",
+        params![max],
+    )?;
+    if deleted > 0 {
+        log::debug!("history pruned {deleted} row(s) beyond the {max}-row cap");
+    }
     Ok(())
 }
 
@@ -161,5 +182,58 @@ fn csv_escape(s: &str) -> String {
         format!("\"{escaped}\"")
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().expect("open in-memory db");
+        conn.execute_batch(SCHEMA).expect("create schema");
+        conn
+    }
+
+    fn insert_n(conn: &Connection, n: i64) {
+        for i in 1..=n {
+            conn.execute(
+                "INSERT INTO history (timestamp, mode, raw_transcript, status)
+                 VALUES (?1, 'dictation', ?2, 'success')",
+                params![i, format!("entry {i}")],
+            )
+            .expect("insert");
+        }
+    }
+
+    fn row_count(conn: &Connection) -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM history", [], |r| r.get(0))
+            .expect("count")
+    }
+
+    #[test]
+    fn prune_keeps_only_the_newest_rows() {
+        let conn = test_conn();
+        let over = MAX_HISTORY_ROWS + 25;
+        insert_n(&conn, over);
+        prune(&conn, MAX_HISTORY_ROWS).expect("prune");
+        assert_eq!(row_count(&conn), MAX_HISTORY_ROWS);
+        // The survivors must be the most recently inserted rows (highest ids).
+        let min_id: i64 = conn
+            .query_row("SELECT MIN(id) FROM history", [], |r| r.get(0))
+            .expect("min id");
+        assert_eq!(min_id, 26, "the oldest 25 rows should have been pruned");
+        let max_id: i64 = conn
+            .query_row("SELECT MAX(id) FROM history", [], |r| r.get(0))
+            .expect("max id");
+        assert_eq!(max_id, over, "the newest row must survive");
+    }
+
+    #[test]
+    fn prune_under_cap_is_a_no_op() {
+        let conn = test_conn();
+        insert_n(&conn, 10);
+        prune(&conn, MAX_HISTORY_ROWS).expect("prune");
+        assert_eq!(row_count(&conn), 10);
     }
 }

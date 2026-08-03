@@ -251,6 +251,27 @@ pub fn export_history_csv() -> Result<String, String> {
     history::export_csv().map_err(|e| format!("{e:#}"))
 }
 
+/// Re-inject history text into whatever app is frontmost right now. Unlike the
+/// recording pipeline (which captures a target app at hotkey time), re-inject
+/// deliberately targets the *live* frontmost app — the user picks the
+/// destination by focusing it before clicking. A fresh session is minted so the
+/// abort check inside `inject_text` passes; per latest-wins this also supersedes
+/// any in-flight recording, which then won't paste stale text on top.
+#[tauri::command]
+pub async fn reinject_text<R: Runtime>(app: AppHandle<R>, text: String) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err("nothing to re-inject: entry has no text".to_string());
+    }
+    let session = crate::session::begin();
+    log::info!(
+        "re-injecting {} chars from history (session {session})",
+        text.len()
+    );
+    crate::injector::inject_text(&app, &text, None, session)
+        .await
+        .map_err(|e| format!("re-inject: {e:#}"))
+}
+
 #[tauri::command]
 pub fn complete_onboarding<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     let mut settings = settings_store::load(&app).map_err(|e| format!("load: {e:#}"))?;

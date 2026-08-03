@@ -195,6 +195,10 @@ export async function exportHistoryCsv(): Promise<string> {
   return await invoke<string>("export_history_csv");
 }
 
+export async function reinjectText(text: string): Promise<void> {
+  await invoke("reinject_text", { text });
+}
+
 export type LoadedAction = {
   id: string;
   name: string;
