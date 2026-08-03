@@ -18,8 +18,8 @@ Native MediaRecorder format in WKWebView on macOS. Groq Whisper accepts webm dir
 ### 4. API keys (Phase 1 only) = `.env` via `dotenvy`
 Quickest unblock for end-to-end testing. Keychain integration arrives in Phase 3 per the PRD build order.
 
-### 5. Clipboard save/restore window = 200ms
-After issuing simulated `Cmd+V`, wait 200ms before restoring previous clipboard. Long enough for the target app to consume the paste, short enough not to feel laggy.
+### 5. Clipboard save/restore window = 250ms
+After issuing simulated `Cmd+V`, wait 250ms before restoring previous clipboard. Long enough for the target app to consume the paste, short enough not to feel laggy. (Documented as 200ms here until the code settled at 250ms in `injector.rs`; the restore runs immediately on paste-failure paths, which no longer skip it.)
 
 ### 6. Hidden runtime window
 A single invisible window hosts the React app so MediaRecorder has a webview to live in. The menu bar tray icon and visible Settings window arrive in Phase 2/3.
@@ -31,7 +31,9 @@ TechGuider-namespaced bundle identifier.
 npm requires lowercase package names; product name in Tauri config stays `Wisspa`.
 
 ### 9. Cmd+V dispatch via AppleScript, not enigo (Phase 1)
-The PRD specifies `enigo` for keystroke simulation. On macOS, even with Accessibility permission granted (`AXIsProcessTrusted() == true`), enigo's `CGEventPost`-based dispatch hard-aborts the host process — the abort bypasses Rust's `catch_unwind` and takes the whole binary down right after the keystroke is posted. AppleScript via `osascript -e 'tell application "System Events" to keystroke "v" using command down'` is robust, well-documented, and the macOS-blessed path. enigo is kept in `Cargo.toml` for the Phase 4 keystroke action type (where it dispatches its own process, isolating any abort).
+The PRD specifies `enigo` for keystroke simulation. On macOS, even with Accessibility permission granted (`AXIsProcessTrusted() == true`), enigo's `CGEventPost`-based dispatch hard-aborts the host process — the abort bypasses Rust's `catch_unwind` and takes the whole binary down right after the keystroke is posted. AppleScript via `osascript -e 'tell application "System Events" to keystroke "v" using command down'` is robust, well-documented, and the macOS-blessed path.
+
+The plan at the time was to keep enigo in `Cargo.toml` for the Phase 4 keystroke action type, dispatching it in its own process to isolate any abort. When Phase 4 landed, the `keystroke` action type went through AppleScript too (`combo_to_applescript` in `actions/executor.rs`, same System Events osascript path) — so enigo was never actually linked from any code path, and the unused dependency has since been removed. The reasoning above stands: if synthetic keystrokes ever move off AppleScript, enigo's macOS abort behaviour is why it must not run in the host process.
 
 ### 10. macOS accessory app from launch
 `setActivationPolicy(Accessory)` is set in `setup()` so there's no dock icon and the app never steals focus on launch / rebuild.
