@@ -595,6 +595,7 @@ function HotkeysStep() {
           <Combo label="Dictation" combo="Cmd+Shift+Space" tint="blue" />
           <Combo label="Action mode" combo="Cmd+Shift+A" tint="violet" />
           <Combo label="Prompt mode" combo="Cmd+Shift+P" tint="emerald" />
+          <Combo label="Command mode" combo="Cmd+Shift+C" tint="amber" />
           <Combo label="Cancel recording" combo="Esc" tint="slate" />
         </div>
       </Card>
@@ -629,12 +630,13 @@ function Combo({
 }: {
   label: string;
   combo: string;
-  tint: "blue" | "violet" | "emerald" | "slate";
+  tint: "blue" | "violet" | "emerald" | "amber" | "slate";
 }) {
   const dot = {
     blue: "bg-blue-500",
     violet: "bg-violet-500",
     emerald: "bg-emerald-500",
+    amber: "bg-amber-500",
     slate: "bg-slate-400",
   }[tint];
   return (

@@ -44,7 +44,7 @@ export default function RecordingOverlay() {
         setLevel(0);
         sessionRef.current = e.payload?.session ?? 0;
         const m = e.payload?.mode;
-        if (m === "dictation" || m === "action" || m === "prompt") setMode(m);
+        if (m === "dictation" || m === "action" || m === "prompt" || m === "command") setMode(m);
       },
     ).then(track);
 

@@ -185,6 +185,7 @@ pub fn default_combo(action: &str) -> &'static str {
         "dictation" => "CmdOrCtrl+Shift+Space",
         "action" => "CmdOrCtrl+Shift+A",
         "prompt" => "CmdOrCtrl+Shift+P",
+        "command" => "CmdOrCtrl+Shift+C",
         "cancel" => "Escape",
         _ => "",
     }
@@ -241,6 +242,8 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 ("action", ShortcutState::Released) => handle_release(app, "action"),
                 ("prompt", ShortcutState::Pressed) => handle_press(app, "prompt"),
                 ("prompt", ShortcutState::Released) => handle_release(app, "prompt"),
+                ("command", ShortcutState::Pressed) => handle_press(app, "command"),
+                ("command", ShortcutState::Released) => handle_release(app, "command"),
                 ("cancel", ShortcutState::Pressed) => {
                     // Esc is registered as a GLOBAL shortcut, so it fires on
                     // every Esc press in every app. Without a live recording
@@ -284,6 +287,7 @@ pub fn register_default_shortcuts<R: Runtime>(
         ("dictation", settings.hotkeys.dictation.as_str()),
         ("action", settings.hotkeys.action.as_str()),
         ("prompt", settings.hotkeys.prompt.as_str()),
+        ("command", settings.hotkeys.command.as_str()),
         ("cancel", settings.hotkeys.cancel.as_str()),
     ] {
         if let Err(e) = register(app, action, combo) {
@@ -364,7 +368,7 @@ pub fn resume_all<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{press_action, PressAction};
+    use super::{default_combo, press_action, PressAction};
 
     #[test]
     fn press_and_hold_always_starts_on_press() {
@@ -378,5 +382,25 @@ mod tests {
     fn toggle_alternates_start_and_stop_on_the_pressed_edge() {
         assert_eq!(press_action("toggle", false), PressAction::Start);
         assert_eq!(press_action("toggle", true), PressAction::Stop);
+    }
+
+    #[test]
+    fn default_combos_cover_command_mode_and_never_collide() {
+        let combos = [
+            default_combo("dictation"),
+            default_combo("action"),
+            default_combo("prompt"),
+            default_combo("command"),
+            default_combo("cancel"),
+        ];
+        assert!(
+            combos.iter().all(|c| !c.is_empty()),
+            "every action needs a default combo"
+        );
+        for (i, a) in combos.iter().enumerate() {
+            for b in &combos[i + 1..] {
+                assert_ne!(a, b, "default hotkey collision: {a} vs {b}");
+            }
+        }
     }
 }

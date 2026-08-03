@@ -250,7 +250,16 @@ pub struct Hotkeys {
     pub dictation: String,
     pub action: String,
     pub prompt: String,
+    /// Command Mode (select text → hold hotkey → speak an instruction).
+    /// `#[serde(default)]` so settings.json files that predate the mode load
+    /// with the default combo instead of tripping the corrupt-reset path.
+    #[serde(default = "default_command_hotkey")]
+    pub command: String,
     pub cancel: String,
+}
+
+fn default_command_hotkey() -> String {
+    "CmdOrCtrl+Shift+C".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -360,6 +369,7 @@ impl Default for Settings {
                 dictation: "CmdOrCtrl+Shift+Space".to_string(),
                 action: "CmdOrCtrl+Shift+A".to_string(),
                 prompt: "CmdOrCtrl+Shift+P".to_string(),
+                command: default_command_hotkey(),
                 cancel: "Escape".to_string(),
             },
 
@@ -672,6 +682,61 @@ mod tests {
             parsed.prompt_mode.adaptive_refine,
             "missing adaptive_refine key must default to true"
         );
+    }
+
+    #[test]
+    fn command_hotkey_default_is_cmd_shift_c() {
+        assert_eq!(Settings::default().hotkeys.command, "CmdOrCtrl+Shift+C");
+    }
+
+    #[test]
+    fn command_hotkey_round_trips() {
+        let mut settings = Settings::default();
+        settings.hotkeys.command = "CmdOrCtrl+Shift+K".to_string();
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        let parsed: Settings = serde_json::from_str(&json).expect("deserialize settings");
+        assert_eq!(parsed.hotkeys.command, "CmdOrCtrl+Shift+K");
+    }
+
+    #[test]
+    fn command_hotkey_defaults_when_key_missing() {
+        // Simulate a settings.json written before Command Mode shipped: the
+        // hotkeys object has no `command` key. It must load with the default
+        // combo (and keep the user's other combos) rather than tripping the
+        // corrupt-reset path.
+        let mut value = serde_json::to_value(Settings::default()).expect("to value");
+        let hotkeys = value
+            .get_mut("hotkeys")
+            .and_then(|h| h.as_object_mut())
+            .expect("hotkeys object");
+        hotkeys.remove("command");
+        hotkeys.insert("prompt".to_string(), serde_json::json!("F19"));
+        assert!(hotkeys.get("command").is_none());
+
+        let parsed = serde_json::from_value::<Settings>(value);
+        assert!(parsed.is_ok(), "missing key must deserialize cleanly");
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.hotkeys.command, "CmdOrCtrl+Shift+C");
+        assert_eq!(parsed.hotkeys.prompt, "F19", "existing combos preserved");
+    }
+
+    #[test]
+    fn default_hotkeys_do_not_collide() {
+        // The shipped defaults must be mutually exclusive — a collision would
+        // silently shadow one mode behind another's registration.
+        let h = Settings::default().hotkeys;
+        let combos = [
+            h.dictation.as_str(),
+            h.action.as_str(),
+            h.prompt.as_str(),
+            h.command.as_str(),
+            h.cancel.as_str(),
+        ];
+        for (i, a) in combos.iter().enumerate() {
+            for b in &combos[i + 1..] {
+                assert_ne!(a, b, "default hotkey collision: {a} vs {b}");
+            }
+        }
     }
 
     fn profile(app: &str, tone: &str, vocab: &[&str]) -> AppProfile {
