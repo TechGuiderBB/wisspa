@@ -1,0 +1,17 @@
+{
+  "name": "chatgpt_simple_tab",
+  "transcript": "ask chatgpt for five date night ideas in sydney that aren't just dinner and a movie",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://chatgpt.com/",
+    "title": "ChatGPT"
+  },
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["date", "sydney"],
+    "must_not_include": ["<context>", "<task>", "here is"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

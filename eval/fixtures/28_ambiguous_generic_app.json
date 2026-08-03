@@ -1,0 +1,14 @@
+{
+  "name": "ambiguous_generic_app",
+  "transcript": "explain the difference between tcp and udp",
+  "active_app": "Generic",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["tcp", "udp"],
+    "must_not_include": ["here is"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

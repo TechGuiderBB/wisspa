@@ -1,0 +1,14 @@
+{
+  "name": "cursor_rename_variable",
+  "transcript": "rename the retry count variable to max attempts everywhere it's used",
+  "active_app": "Cursor",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["rename", "retry"],
+    "must_not_include": ["<task>", "<context>", "## "],
+    "max_chars": null,
+    "max_sentences": 3
+  }
+}

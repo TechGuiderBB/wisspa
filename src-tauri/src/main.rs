@@ -7,6 +7,10 @@ mod audio;
 mod ax_snapshot;
 mod clipboard;
 mod commands;
+// Prompt-mode eval harness (eval/fixtures corpus + live-API runner). Test-only:
+// never compiled into the binary, so it stays out of the release artifact.
+#[cfg(test)]
+mod eval;
 mod history;
 mod hotkeys;
 mod injector;

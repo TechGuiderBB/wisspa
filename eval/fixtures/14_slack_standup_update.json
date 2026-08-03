@@ -1,0 +1,14 @@
+{
+  "name": "slack_standup_update",
+  "transcript": "post in the dev channel that the migration is done and the deploy is green and I'll write up the retro notes tomorrow",
+  "active_app": "Slack",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "content",
+    "must_include": ["migration", "deploy"],
+    "must_not_include": ["<task>", "dear", "regards", "here is"],
+    "max_chars": 400,
+    "max_sentences": 4
+  }
+}

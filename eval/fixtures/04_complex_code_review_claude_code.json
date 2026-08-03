@@ -1,0 +1,14 @@
+{
+  "name": "complex_code_review_claude_code",
+  "transcript": "okay this one's a bit involved I need a prompt for a code review of my payments service it should check for sql injection and xss vulnerabilities and also look at error handling around the stripe webhooks and I want the output as a table with severity file and line number",
+  "active_app": "Claude Code",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["sql injection", "xss", "error handling", "table", "severity", "<"],
+    "must_not_include": ["here is", "sure,"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

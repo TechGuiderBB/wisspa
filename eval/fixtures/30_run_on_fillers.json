@@ -1,0 +1,14 @@
+{
+  "name": "run_on_fillers",
+  "transcript": "so um what I need is like a prompt that will um help me write a cover letter for a senior product manager role at atlassian and um it should sound confident but not arrogant and mention my eight years in fintech",
+  "active_app": "Claude",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["cover letter", "product manager", "atlassian", "fintech"],
+    "must_not_include": ["here is", "sure,"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "github_issue",
+  "transcript": "file a bug report the export button crashes the app when the document is empty this is on mac os version 0.3",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://github.com/TechGuiderBB/wisspa/issues/new",
+    "title": "New Issue"
+  },
+  "selected_text": null,
+  "expect": {
+    "route": "content",
+    "must_include": ["export", "crash"],
+    "must_not_include": ["<task>", "here is"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

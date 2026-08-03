@@ -1,0 +1,14 @@
+{
+  "name": "slack_question_terse",
+  "transcript": "ask sarah if the figma file for the new onboarding flow is final yet",
+  "active_app": "Slack",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "content",
+    "must_include": ["figma"],
+    "must_not_include": ["<task>", "subject:", "dear"],
+    "max_chars": null,
+    "max_sentences": 2
+  }
+}
