@@ -5,11 +5,13 @@ use tauri::{AppHandle, Runtime};
 /// Marker surfaced through `Err` when Command Mode was triggered with no text
 /// selected. Recognised in `process_audio` (history status `cancelled` with a
 /// "(no text selected)" note, and no error surfaced to the frontend) — the
-/// warn toast has already fired here in the mode and the LLM was never called.
+/// error-level toast has already fired here in the mode (loud even under quiet
+/// notifications) and the LLM was never called.
 pub const NO_SELECTION_MARKER: &str = "__no_selection__";
 
 /// User-facing toast body for the no-selection early exit. Actionable: names
-/// the missing precondition, not a failure.
+/// the missing precondition. Shown at error level — the user pressed a hotkey
+/// expecting an outcome, so this must be audible even in quiet mode.
 pub const NO_SELECTION_TOAST: &str = "No text selected — select text first";
 
 pub struct CommandOutcome {
@@ -55,20 +57,22 @@ pub async fn run<R: Runtime>(
     }
 
     // Command Mode is meaningless without a selection. No selection (or a
-    // failed capture) is a graceful no-op: warn toast (suppressed by quiet
-    // notifications), cancelled history row via the marker, and crucially no
-    // LLM call. The transcript is the instruction, not content — there is
-    // nothing sensible to paste without text to transform.
+    // failed capture) is a graceful no-op for the pipeline: cancelled history
+    // row via the marker, and crucially no LLM call. But it must be LOUD for
+    // the user — they pressed a hotkey expecting an outcome, so the toast
+    // uses error level, which ignores quiet notifications (a silent failure
+    // reads as "the app is broken"). The transcript is the instruction, not
+    // content — there is nothing sensible to paste without text to transform.
     let selected_text = match selection::read_selected_text(app).await {
         Ok(Some(text)) if !text.trim().is_empty() => text,
         Ok(_) => {
             log::info!("command mode: no text selected");
-            toast::warn(app, "Command mode", NO_SELECTION_TOAST);
+            toast::error(app, "Command mode", NO_SELECTION_TOAST);
             return Err(anyhow::anyhow!(NO_SELECTION_MARKER));
         }
         Err(e) => {
             log::warn!("command mode: selection capture failed: {e:#}");
-            toast::warn(app, "Command mode", NO_SELECTION_TOAST);
+            toast::error(app, "Command mode", NO_SELECTION_TOAST);
             return Err(anyhow::anyhow!(NO_SELECTION_MARKER));
         }
     };
