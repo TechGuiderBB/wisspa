@@ -115,6 +115,11 @@ pub struct General {
     /// Play the "ready" chime when capture goes live. Gated by play_sounds too.
     #[serde(default = "default_ready_chime")]
     pub ready_chime: bool,
+    /// Play a subtle chime the moment dictation finishes and the cleaned
+    /// text is injected. Gated by play_sounds too. Off by default so
+    /// existing installs keep their current UX.
+    #[serde(default)]
+    pub dictation_complete_sound: bool,
     /// Opt-in: warm the mic while the hotkey's modifier key is held, so
     /// recording starts instantly. Off by default.
     #[serde(default = "default_fast_recording_start")]
@@ -245,6 +250,7 @@ impl Default for Settings {
                 notes_path: default_notes_path(),
                 max_recording_seconds: default_max_recording_seconds(),
                 ready_chime: default_ready_chime(),
+                dictation_complete_sound: false,
                 fast_recording_start: default_fast_recording_start(),
                 quiet_notifications: false,
                 verbose_logging: false,
@@ -383,4 +389,41 @@ pub fn record_correction<R: Runtime>(
     let just_crossed = !was_auto && now_auto;
     save(app, &settings)?;
     Ok((now_auto, just_crossed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dictation_complete_sound_default_is_off() {
+        assert!(!Settings::default().general.dictation_complete_sound);
+    }
+
+    #[test]
+    fn dictation_complete_sound_round_trips_when_true() {
+        let mut settings = Settings::default();
+        settings.general.dictation_complete_sound = true;
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        let parsed: Settings = serde_json::from_str(&json).expect("deserialize settings");
+        assert!(parsed.general.dictation_complete_sound);
+    }
+
+    #[test]
+    fn dictation_complete_sound_defaults_off_when_key_missing() {
+        // Simulate an older settings.json that predates this field: serialize a
+        // default Settings, drop the key, and confirm it still loads with the
+        // field defaulting to false rather than tripping the corrupt-reset path.
+        let mut value = serde_json::to_value(Settings::default()).expect("to value");
+        let general = value
+            .get_mut("general")
+            .and_then(|g| g.as_object_mut())
+            .expect("general object");
+        general.remove("dictation_complete_sound");
+        assert!(general.get("dictation_complete_sound").is_none());
+
+        let parsed = serde_json::from_value::<Settings>(value);
+        assert!(parsed.is_ok(), "missing key must deserialize cleanly");
+        assert!(!parsed.unwrap().general.dictation_complete_sound);
+    }
 }
