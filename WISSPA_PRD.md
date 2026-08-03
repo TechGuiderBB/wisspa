@@ -12,7 +12,7 @@ The PRD describes the v1 target. As of v0.1.0 (public preview), all seven build 
 - **Action mode destructive gate** — now enforced via tray menu (Confirm / Cancel) with a 15-second timeout. PRD §5.2 describes a 3-second auto-cancel toast; the actual UX is tray-driven so the user has time to react.
 - **Action mode permission gate** — declared `requires_permissions` are checked before run; a missing permission deep-links the user to the matching System Settings pane.
 - **Edit-before-insert** in Prompt Mode (PRD §5.3 step 6) is **not yet implemented** — Phase 7 polish item. Preview-with-timeout toast is implemented.
-- **`show_desktop` default action** ships with `fn+f11` but the AppleScript keystroke layer does not support `fn`; the action fails when triggered. See `docs/v1-backlog.md`.
+- **`show_desktop` default action** previously shipped as a `fn+f11` keystroke the AppleScript layer rejected; it now ships as an `applescript` Show Desktop action and older installs are migrated on launch.
 - **Auto-update**, **launch-on-login**, **mic calibration**, **Haiku divergence guardrail** are implemented (not described in the original PRD §12 out-of-scope).
 
 ---
@@ -637,7 +637,6 @@ wisspa/
 │   ├── release.yml               # Build + sign + publish
 │   └── security.yml              # gitleaks + cargo audit (weekly cron)
 ├── DECISIONS.md                  # Implementation choices + reasoning
-├── LAUNCH.md                     # Commercial launch plan
 ├── WISSPA_PRD.md                 # This document
 └── README.md
 ```

@@ -386,11 +386,11 @@ mod tests {
     #[test]
     fn parses_well_formed_tab_output() {
         let (url, title) = parse_tab_output(
-            "https://mail.google.com/mail/u/0/#inbox\nInbox - brooke@techguider.com.au - Gmail",
+            "https://mail.google.com/mail/u/0/#inbox\nInbox - user@example.com - Gmail",
         )
         .unwrap();
         assert_eq!(url, "https://mail.google.com/mail/u/0/#inbox");
-        assert_eq!(title, "Inbox - brooke@techguider.com.au - Gmail");
+        assert_eq!(title, "Inbox - user@example.com - Gmail");
     }
 
     #[test]

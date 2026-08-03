@@ -161,7 +161,7 @@ No Rust test suite exists. Manual QA:
 2. **Modifier-monitor false positives** on common modifiers — accepted and
    documented; mitigated by the max-warm timeout.
 3. **Chime default.** `ready_chime` defaults to `true` to preserve current
-   behaviour for existing users; Brooke turns his off.
+   behaviour for existing users who disable it.
 
 ## Future work (not in this spec)
 
