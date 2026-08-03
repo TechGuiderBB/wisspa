@@ -109,6 +109,7 @@ export type Settings = {
   onboarding_completed: boolean;
   mic_calibration: MicCalibration | null;
   vocabulary: VocabEntry[];
+  word_corrections: WordCorrections;
   profiles: AppProfile[];
 };
 
