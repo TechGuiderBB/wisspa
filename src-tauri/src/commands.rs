@@ -316,6 +316,11 @@ pub async fn process_audio<R: Runtime>(
             .collect();
         Some(words.join(", "))
     };
+    // Latency clock for the history entry: starts BEFORE the STT round trip so
+    // `duration_ms` reflects the real release→insert latency, including the
+    // Groq call (previously the clock started after transcription and
+    // understated the latency by the whole STT request).
+    let started = std::time::Instant::now();
     // Race STT against cancellation. An Esc (or a newer recording) drops the
     // transcribe future, cancelling the in-flight Groq request rather than
     // letting it run to completion and discarding the result (issue #31).
@@ -404,7 +409,6 @@ pub async fn process_audio<R: Runtime>(
         return Ok(String::new());
     }
 
-    let started = std::time::Instant::now();
     // action mode returns (text, matched_action_id) so history can record which action ran.
     let (result, matched_action_id): (Result<String, String>, Option<String>) =
         match mode.as_str() {
