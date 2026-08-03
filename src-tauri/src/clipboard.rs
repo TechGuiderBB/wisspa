@@ -118,6 +118,25 @@ pub fn snapshot() -> ClipboardSnapshot {
 #[cfg(not(target_os = "macos"))]
 pub fn restore(_snapshot: &ClipboardSnapshot) {}
 
+/// The general pasteboard's `changeCount`: a monotonically increasing counter
+/// bumped by every pasteboard WRITE (clearContents, writeObjects, another app
+/// copying). Reads do not move it. The injector takes a baseline after writing
+/// its text and polls this after Cmd+V so the clipboard restore can happen as
+/// soon as the pasteboard has moved on, instead of after a fixed worst-case
+/// sleep. Off-macOS there is no pasteboard to watch: returns a constant so the
+/// poll runs to its cap (the old fixed-sleep behaviour).
+#[cfg(target_os = "macos")]
+pub fn change_count() -> i64 {
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::NSPasteboard;
+    autoreleasepool(|_| NSPasteboard::generalPasteboard().changeCount() as i64)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn change_count() -> i64 {
+    0
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
@@ -185,5 +204,26 @@ mod tests {
         let snap = ClipboardSnapshot::default();
         assert!(snap.is_empty());
         assert_eq!(snap.flavor_count(), 0);
+    }
+
+    /// The injector's early-restore signal rests on writes bumping
+    /// changeCount. Proven here against a PRIVATE pasteboard so the test never
+    /// touches the user's system clipboard.
+    #[test]
+    fn writes_bump_change_count_on_private_pasteboard() {
+        autoreleasepool(|_| {
+            let pb = NSPasteboard::pasteboardWithUniqueName();
+            let before = pb.changeCount();
+            let snap = ClipboardSnapshot {
+                items: vec![item(&[("public.utf8-plain-text", b"wisspa")])],
+                skipped_promised: 0,
+            };
+            restore_pasteboard(&pb, &snap);
+            assert!(
+                pb.changeCount() > before,
+                "clearContents+writeObjects must bump changeCount ({before} -> {})",
+                pb.changeCount()
+            );
+        });
     }
 }
