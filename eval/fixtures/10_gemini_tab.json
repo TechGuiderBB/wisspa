@@ -1,0 +1,17 @@
+{
+  "name": "gemini_tab",
+  "transcript": "ask gemini to compare the iphone 16 pro and the pixel 9 pro for photography especially in low light",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://gemini.google.com/app",
+    "title": "Gemini"
+  },
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["iphone", "pixel", "low"],
+    "must_not_include": ["<task>", "here is"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

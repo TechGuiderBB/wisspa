@@ -1,0 +1,17 @@
+{
+  "name": "simple_question_claude_tab",
+  "transcript": "ask it what the difference is between a roth ira and a traditional ira",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://claude.ai/chat/new",
+    "title": "Claude"
+  },
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["roth", "ira"],
+    "must_not_include": ["here is", "sure,"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

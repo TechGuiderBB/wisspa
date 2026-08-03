@@ -1,0 +1,14 @@
+{
+  "name": "degenerate_fragment",
+  "transcript": "the deploy button",
+  "active_app": "Claude",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "passthrough",
+    "must_include": ["deploy button"],
+    "must_not_include": ["<task>", "here is"],
+    "max_chars": 40,
+    "max_sentences": null
+  }
+}

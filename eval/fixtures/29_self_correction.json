@@ -1,0 +1,14 @@
+{
+  "name": "self_correction",
+  "transcript": "write a prompt to draft a follow up email to the venue no wait actually make it a cold outreach email to a landlord asking about flexibility on the lease terms",
+  "active_app": "Claude",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["landlord", "lease"],
+    "must_not_include": ["here is", "venue"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

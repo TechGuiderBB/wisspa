@@ -1,0 +1,14 @@
+{
+  "name": "cursor_fix_typo",
+  "transcript": "fix the typo on the login button it says loggin",
+  "active_app": "Cursor",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["typo", "login"],
+    "must_not_include": ["<task>", "<context>", "## "],
+    "max_chars": null,
+    "max_sentences": 3
+  }
+}

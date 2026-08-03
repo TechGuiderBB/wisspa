@@ -1,0 +1,17 @@
+{
+  "name": "gmail_compose_team",
+  "transcript": "write an email to the team letting them know I'll be offline friday for a personal day and they should ping tom instead for anything urgent",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox - Gmail"
+  },
+  "selected_text": null,
+  "expect": {
+    "route": "content",
+    "must_include": ["friday", "tom"],
+    "must_not_include": ["<task>", "here is a", "sure,"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "notion_meeting_notes",
+  "transcript": "write up meeting notes for today's product sync we covered the api migration timeline the new onboarding designs and the hiring plan for two engineers",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://www.notion.so/workspace",
+    "title": "Product Sync Notes"
+  },
+  "selected_text": null,
+  "expect": {
+    "route": "content",
+    "must_include": ["migration", "onboarding", "hiring"],
+    "must_not_include": ["<task>", "here is"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

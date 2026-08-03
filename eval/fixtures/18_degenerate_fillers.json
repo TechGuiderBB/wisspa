@@ -1,0 +1,14 @@
+{
+  "name": "degenerate_fillers",
+  "transcript": "um uh so yeah",
+  "active_app": "Cursor",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "passthrough",
+    "must_include": [],
+    "must_not_include": ["<task>", "here is"],
+    "max_chars": 30,
+    "max_sentences": null
+  }
+}

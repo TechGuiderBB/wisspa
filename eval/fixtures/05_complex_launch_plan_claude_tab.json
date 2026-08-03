@@ -1,0 +1,17 @@
+{
+  "name": "complex_launch_plan_claude_tab",
+  "transcript": "big one so I need a proper prompt a product launch plan for our lease review software I want a week by week timeline the key channels are linkedin and email a section on risks and mitigations and the whole thing formatted in markdown with clear phases",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://claude.ai/chat/abc123",
+    "title": "New chat - Claude"
+  },
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["timeline", "linkedin", "email", "risk", "markdown", "<"],
+    "must_not_include": ["here is", "sure,"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

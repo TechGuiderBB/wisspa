@@ -233,6 +233,8 @@ cd src-tauri && cargo test
 
 Frontend typechecking: `pnpm build` (runs `tsc` + Vite build).
 
+Prompt-mode eval harness (live API, not CI): see `eval/README.md` — `cd src-tauri && ANTHROPIC_API_KEY=... cargo test -- --ignored eval_prompt --nocapture`.
+
 CI:
 
 - **`security.yml`** — `gitleaks` (full-history secret scanning) + `cargo audit` + `cargo test` + frontend typecheck. On push, on PR, and weekly cron.

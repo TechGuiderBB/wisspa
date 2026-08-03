@@ -1,0 +1,17 @@
+{
+  "name": "twitter_post_terse",
+  "transcript": "tweet that we just crossed a thousand users and a genuine thank you to everyone who took a chance on us early",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://x.com/home",
+    "title": "Home / X"
+  },
+  "selected_text": null,
+  "expect": {
+    "route": "content",
+    "must_include": ["users"],
+    "must_not_include": ["<task>", "here is"],
+    "max_chars": 280,
+    "max_sentences": null
+  }
+}

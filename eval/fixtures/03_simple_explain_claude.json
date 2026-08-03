@@ -1,0 +1,14 @@
+{
+  "name": "simple_explain_claude",
+  "transcript": "I want to ask claude to explain what an etf is like I'm five",
+  "active_app": "Claude",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["etf"],
+    "must_not_include": ["here is", "<context>", "<task>"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}
