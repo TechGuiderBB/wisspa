@@ -144,7 +144,13 @@ pub async fn run<R: Runtime>(
         .await?;
         (reviewed, focus_target)
     } else {
-        (final_text, Some(active_app.clone()))
+        // When detection failed, active_app is the "a macOS app" placeholder —
+        // activating it errors and fails the whole paste (the placeholder is
+        // not a real process). Inject with no target instead: the text lands
+        // wherever macOS has focus, which is right in practice — the user
+        // just dictated into it. Same policy as the review path above.
+        let inject_to = dictation_inject_target(app_detected, &active_app);
+        (final_text, inject_to)
     };
 
     injector::inject_text(app, &final_text, inject_to.as_deref(), session).await?;
@@ -188,6 +194,19 @@ fn dictation_review_focus_target(app_detected: bool, active_app: &str) -> Option
         if app_detected { Some(active_app) } else { None },
         None,
     )
+}
+
+/// The app to re-activate before pasting a non-reviewed dictation. Same rule
+/// as the review path: a failed detection yields the "a macOS app" placeholder,
+/// and activating that placeholder hard-fails the paste for no benefit — so
+/// no target, and the text lands wherever macOS has focus (which is where the
+/// user just dictated).
+fn dictation_inject_target(app_detected: bool, active_app: &str) -> Option<String> {
+    if app_detected {
+        Some(active_app.to_string())
+    } else {
+        None
+    }
 }
 
 /// Replace auto-apply corrections in `text`. Matches are case-insensitive and
@@ -359,5 +378,16 @@ mod tests {
         // The "a macOS app" fallback placeholder must never be activated: the
         // hard activation error would discard the user's edited text.
         assert_eq!(dictation_review_focus_target(false, "a macOS app"), None);
+    }
+
+    #[test]
+    fn inject_target_is_none_when_detection_failed() {
+        // Non-review path, same rule: activating the placeholder fails the
+        // whole paste; pasting into the focused app is the right fallback.
+        assert_eq!(dictation_inject_target(false, "a macOS app"), None);
+        assert_eq!(
+            dictation_inject_target(true, "Notes"),
+            Some("Notes".to_string())
+        );
     }
 }
