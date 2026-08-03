@@ -397,7 +397,23 @@ pub async fn process_audio<R: Runtime>(
     let settings = settings_store::load(&app).unwrap_or_default();
     // Honour the verbose-logging toggle without requiring an app restart.
     crate::redact::set_verbose(settings.general.verbose_logging);
-    let vocab_hint = build_vocab_hint(&settings.vocabulary);
+    // Per-app profiles apply to dictation only (prompt/action modes keep the
+    // global vocabulary). The match runs against the press-time app snapshot,
+    // peeked rather than consumed — the dictation pipeline takes it later.
+    // When the snapshot hasn't landed yet there is simply no profile this run.
+    // Profile words go FIRST in the merged list, so the 800-char hint cap
+    // below can only ever truncate global entries, never profile words.
+    let effective_vocabulary = if mode == "dictation" {
+        match crate::app_detector::peek_target_app()
+            .and_then(|app| settings_store::match_profile(&settings.profiles, &app))
+        {
+            Some(p) => settings_store::merge_profile_vocabulary(&settings.vocabulary, &p.vocab),
+            None => settings.vocabulary.clone(),
+        }
+    } else {
+        settings.vocabulary.clone()
+    };
+    let vocab_hint = build_vocab_hint(&effective_vocabulary);
     // Latency clock for the history entry: starts BEFORE the STT round trip so
     // `duration_ms` reflects the real release→insert latency, including the
     // Groq call (previously the clock started after transcription and
@@ -495,7 +511,7 @@ pub async fn process_audio<R: Runtime>(
     // whose vocabulary overlaps with their action triggers.
     let transcript = match mode.as_str() {
         "action" => transcript,
-        _ => settings_store::apply_vocabulary(&transcript, &settings.vocabulary),
+        _ => settings_store::apply_vocabulary(&transcript, &effective_vocabulary),
     };
 
     // Checkpoint between the (now-finished) STT call and the side-effectful
@@ -999,5 +1015,29 @@ mod tests {
         let hint = build_vocab_hint(&v).expect("hint");
         assert!(hint.len() <= VOCAB_HINT_MAX_CHARS);
         assert!(hint.chars().all(|c| c == '€'));
+    }
+
+    #[test]
+    fn merged_profile_words_survive_hint_truncation() {
+        // A matched profile's words are merged ahead of the global list, so
+        // when the combined hint exceeds the cap only global entries are cut.
+        let globals: Vec<String> = (0..100).map(|i| format!("global{i:06}")).collect();
+        let global_entries: Vec<settings_store::VocabEntry> = globals
+            .iter()
+            .map(|w| settings_store::VocabEntry {
+                spoken: w.clone(),
+                replace_with: w.clone(),
+            })
+            .collect();
+        let profile_vocab = vec!["standup".to_string(), "retro".to_string()];
+        let merged =
+            settings_store::merge_profile_vocabulary(&global_entries, &profile_vocab);
+        let hint = build_vocab_hint(&merged).expect("hint");
+        assert!(hint.len() <= VOCAB_HINT_MAX_CHARS);
+        assert!(
+            hint.starts_with("standup, retro"),
+            "profile words must lead the hint: {}",
+            &hint[..hint.len().min(80)]
+        );
     }
 }

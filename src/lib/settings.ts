@@ -8,6 +8,15 @@ export type VocabEntry = {
   replace_with: string;
 };
 
+export type AppProfile = {
+  /** Substring matched case-insensitively against the detected active-app name. First match wins. */
+  app: string;
+  /** Free-text tone guidance appended to the dictation cleanup prompt (e.g. "casual, no greetings"). */
+  tone: string;
+  /** Extra vocabulary words for this app; take precedence over global entries on conflict. */
+  vocab: string[];
+};
+
 export type VocabImportSkip = {
   line: number;
   reason: string;
@@ -96,6 +105,7 @@ export type Settings = {
   onboarding_completed: boolean;
   mic_calibration: MicCalibration | null;
   vocabulary: VocabEntry[];
+  profiles: AppProfile[];
 };
 
 export const HOTKEY_ACTIONS = ["dictation", "action", "prompt", "cancel"] as const;
