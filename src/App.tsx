@@ -238,7 +238,12 @@ function Runtime() {
           const bytesPerSecond = blob.size / Math.max(0.001, durationMs / 1000);
           const peakSilent = peakAmplitude < thresholds.peak;
           const dataSilent = bytesPerSecond < thresholds.bytesPerSecond;
-          if (peakSilent || dataSilent) {
+          // AND, not OR: discard only when BOTH signals look silent. With OR,
+          // a quiet voice (low peak) or efficient low-bitrate encoding of soft
+          // speech (low B/s) alone could nuke a real dictation. The backend
+          // confidence gate now handles noise-induced hallucinations, so this
+          // guard only needs to catch recordings silent on every signal.
+          if (peakSilent && dataSilent) {
             console.warn(
               `silent recording suppressed: peak=${peakAmplitude.toFixed(2)} ` +
                 `bytes=${blob.size} duration=${durationMs}ms ` +

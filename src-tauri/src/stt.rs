@@ -17,9 +17,29 @@ static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
         .unwrap_or_else(|_| reqwest::Client::new())
 });
 
+/// One segment of a `verbose_json` transcription, carrying the provider's own
+/// confidence signals. Both fields are optional on purpose: a provider
+/// response-shape change must never break parsing — missing fields decode as
+/// `None` and the confidence gate in commands.rs fails open (accepts).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TranscriptSegment {
+    pub no_speech_prob: Option<f64>,
+    pub avg_logprob: Option<f64>,
+}
+
+/// Parsed STT result: the transcript text plus per-segment confidence
+/// (`segments` is empty when the response carries no segments array).
+#[derive(Debug, Clone)]
+pub struct Transcription {
+    pub text: String,
+    pub segments: Vec<TranscriptSegment>,
+}
+
 #[derive(Debug, Deserialize)]
 struct GroqResponse {
     text: String,
+    #[serde(default)]
+    segments: Vec<TranscriptSegment>,
 }
 
 pub async fn transcribe_audio(
@@ -29,7 +49,7 @@ pub async fn transcribe_audio(
     language: &str,
     model: &str,
     vocab_hint: Option<&str>,
-) -> Result<String> {
+) -> Result<Transcription> {
     if api_key.is_empty() {
         return Err(anyhow!("GROQ_API_KEY is empty"));
     }
@@ -68,7 +88,10 @@ pub async fn transcribe_audio(
         let mut form = Form::new()
             .part("file", part)
             .text("model", model.to_string())
-            .text("response_format", "json")
+            // verbose_json adds the segments array (per-segment no_speech_prob
+            // and avg_logprob) that the confidence gate in commands.rs uses to
+            // spot silence/noise hallucinations without a phrase denylist.
+            .text("response_format", "verbose_json")
             .text("language", language.to_string())
             .text("temperature", "0");
         if let Some(hint) = vocab_hint {
@@ -121,7 +144,10 @@ pub async fn transcribe_audio(
     }
 
     let parsed: GroqResponse = res.json().await.context("Groq STT response parse")?;
-    Ok(parsed.text.trim().to_string())
+    Ok(Transcription {
+        text: parsed.text.trim().to_string(),
+        segments: parsed.segments,
+    })
 }
 
 fn guess_filename(mime: &str) -> String {
