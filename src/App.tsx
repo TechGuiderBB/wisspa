@@ -71,6 +71,11 @@ function Runtime() {
   // Processing state: true while awaiting STT/LLM after recording stops.
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingMode, setProcessingMode] = useState<RecordingMode>("dictation");
+  // Elapsed seconds of the in-flight processing pipeline, shown next to the
+  // "Transcribing..." / "Writing prompt..." label so a slow STT/LLM call
+  // reads as progress rather than a hang.
+  const [processingElapsedSec, setProcessingElapsedSec] = useState(0);
+  const processingStartRef = useRef<number | null>(null);
   const flashTimerRef = useRef<number | null>(null);
   // Auto-stop timer for in-progress recordings — guardrail against
   // accidentally long captures (hotkey held while typing, etc).
@@ -104,6 +109,27 @@ function Runtime() {
     const id = setInterval(fetchOnce, 10000);
     return () => clearInterval(id);
   }, []);
+
+  // Processing elapsed timer: starts when a processAudio pipeline begins
+  // (setIsProcessing(true) right before the invoke) and stops on any path
+  // that clears it — completion, error, or Esc cancel. 250 ms tick keeps the
+  // displayed second within a quarter second of wall time.
+  useEffect(() => {
+    if (!isProcessing) {
+      processingStartRef.current = null;
+      return;
+    }
+    processingStartRef.current = performance.now();
+    setProcessingElapsedSec(0);
+    const id = window.setInterval(() => {
+      if (processingStartRef.current !== null) {
+        setProcessingElapsedSec(
+          Math.floor((performance.now() - processingStartRef.current) / 1000),
+        );
+      }
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [isProcessing]);
 
   useEffect(() => {
     // Eagerly request mic permission so macOS shows its prompt at launch
@@ -372,6 +398,11 @@ function Runtime() {
         >
           {flashing ? statusFlash!.message : thinking ? thinkingLabel : "Wisspa"}
         </span>
+        {thinking && (
+          <span className="text-white/70 text-xs tabular-nums">
+            {processingElapsedSec}s
+          </span>
+        )}
         {!flashing && !thinking && lastError && (
           <span className="text-red-400 text-[10px] truncate max-w-[80px]">
             {lastError}
