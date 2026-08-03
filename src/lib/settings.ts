@@ -87,6 +87,8 @@ export type Settings = {
     preview_timeout_seconds: number;
     manual_app_override: string | null;
     review_before_insert: boolean;
+    user_profile: string;
+    adaptive_refine: boolean;
   };
   stt: { provider: string; model: string; language: string };
   cleanup_llm: { provider: string };

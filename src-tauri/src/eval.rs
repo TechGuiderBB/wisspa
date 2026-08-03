@@ -346,6 +346,9 @@ async fn eval_prompt_rewrite_fixtures() {
             &fixture.active_app,
             browser_context.as_ref(),
             fixture.selected_text.as_deref().unwrap_or(""),
+            // The eval corpus carries no user profile; the personalisation
+            // block is omitted, matching a default install.
+            "",
         )
         .await;
         match result {
