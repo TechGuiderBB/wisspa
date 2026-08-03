@@ -7,7 +7,6 @@
     "core:default",
     "core:event:allow-listen",
     "core:event:allow-emit",
-    "core:webview:allow-internal-toggle-devtools",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "notification:default",
