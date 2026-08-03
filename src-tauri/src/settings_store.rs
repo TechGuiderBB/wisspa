@@ -136,6 +136,18 @@ pub struct General {
     /// on temporarily to capture a bug, then off again (issue #33).
     #[serde(default)]
     pub verbose_logging: bool,
+    /// Preferred microphone input device id from `enumerateDevices`. Empty
+    /// string = system default (follows the macOS input source setting). When
+    /// the saved device is unplugged the frontend falls back to the system
+    /// default rather than failing the recording.
+    #[serde(default)]
+    pub input_device_id: String,
+    /// Check for app updates once shortly after launch and toast when one is
+    /// available (never auto-downloads — the user installs from Settings →
+    /// About). On by default; the serde default flips existing installs on at
+    /// next load.
+    #[serde(default = "default_auto_update_check")]
+    pub auto_update_check: bool,
 }
 
 fn default_mic_sensitivity() -> String {
@@ -152,6 +164,10 @@ fn default_ready_chime() -> bool {
 
 fn default_fast_recording_start() -> bool {
     false
+}
+
+fn default_auto_update_check() -> bool {
+    true
 }
 
 fn default_notes_path() -> String {
@@ -255,6 +271,8 @@ impl Default for Settings {
                 fast_recording_start: default_fast_recording_start(),
                 quiet_notifications: false,
                 verbose_logging: false,
+                input_device_id: String::new(),
+                auto_update_check: default_auto_update_check(),
             },
             hotkeys: Hotkeys {
                 // Phase 1/2 ships with safe combos; PRD §4.2 defaults to `fn` etc.
@@ -464,5 +482,67 @@ mod tests {
         let s = Settings::default();
         assert_eq!(s.stt.model, "whisper-large-v3-turbo");
         assert_eq!(s.stt.language, "en");
+    }
+
+    #[test]
+    fn input_device_id_defaults_to_system_default() {
+        assert_eq!(Settings::default().general.input_device_id, "");
+    }
+
+    #[test]
+    fn input_device_id_round_trips() {
+        let mut settings = Settings::default();
+        settings.general.input_device_id = "usb-mic-abc123".to_string();
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        let parsed: Settings = serde_json::from_str(&json).expect("deserialize settings");
+        assert_eq!(parsed.general.input_device_id, "usb-mic-abc123");
+    }
+
+    #[test]
+    fn input_device_id_defaults_empty_when_key_missing() {
+        // Older settings.json predates this field: it must load with the
+        // system-default sentinel rather than tripping the corrupt-reset path.
+        let mut value = serde_json::to_value(Settings::default()).expect("to value");
+        let general = value
+            .get_mut("general")
+            .and_then(|g| g.as_object_mut())
+            .expect("general object");
+        general.remove("input_device_id");
+        assert!(general.get("input_device_id").is_none());
+
+        let parsed = serde_json::from_value::<Settings>(value);
+        assert!(parsed.is_ok(), "missing key must deserialize cleanly");
+        assert_eq!(parsed.unwrap().general.input_device_id, "");
+    }
+
+    #[test]
+    fn auto_update_check_defaults_on() {
+        assert!(Settings::default().general.auto_update_check);
+    }
+
+    #[test]
+    fn auto_update_check_round_trips_when_disabled() {
+        let mut settings = Settings::default();
+        settings.general.auto_update_check = false;
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        let parsed: Settings = serde_json::from_str(&json).expect("deserialize settings");
+        assert!(!parsed.general.auto_update_check);
+    }
+
+    #[test]
+    fn auto_update_check_defaults_on_when_key_missing() {
+        // Older settings.json predates this field: it must load with the
+        // launch-time check ON (the shipped default), not false.
+        let mut value = serde_json::to_value(Settings::default()).expect("to value");
+        let general = value
+            .get_mut("general")
+            .and_then(|g| g.as_object_mut())
+            .expect("general object");
+        general.remove("auto_update_check");
+        assert!(general.get("auto_update_check").is_none());
+
+        let parsed = serde_json::from_value::<Settings>(value);
+        assert!(parsed.is_ok(), "missing key must deserialize cleanly");
+        assert!(parsed.unwrap().general.auto_update_check);
     }
 }
