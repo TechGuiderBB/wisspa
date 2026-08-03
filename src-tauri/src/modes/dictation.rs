@@ -98,6 +98,8 @@ pub async fn run<R: Runtime>(
 
     injector::inject_text(app, &final_text, Some(&active_app), session).await?;
 
+    crate::sounds::play(app, crate::sounds::Cue::Complete);
+
     // Spawn auto-learn snapshot task if the user has opted in.
     if let Some(wc) = &word_corrections {
         if wc.enabled && wc.learn_from_edits {
