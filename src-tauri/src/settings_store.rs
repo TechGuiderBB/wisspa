@@ -200,6 +200,22 @@ pub struct PromptMode {
     /// on. `#[serde(default)]` so existing settings.json files load unchanged.
     #[serde(default)]
     pub review_before_insert: bool,
+    /// Free-text standing preferences (role, tone, format — e.g. "iOS engineer,
+    /// terse, prefer tables for comparisons"). Injected into the Sonnet user
+    /// message as a `<user_profile>` block when non-empty. `#[serde(default)]`
+    /// (empty) so existing settings.json files load unchanged.
+    #[serde(default)]
+    pub user_profile: String,
+    /// Run the adaptive second-pass critique on complex transcripts: a second
+    /// Sonnet call checks the first draft against the quality bar. Upside-only
+    /// — a failed critique keeps the first draft. Default TRUE; the explicit
+    /// default fn keeps older settings.json files (which predate the key) on.
+    #[serde(default = "default_adaptive_refine")]
+    pub adaptive_refine: bool,
+}
+
+fn default_adaptive_refine() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,6 +305,8 @@ impl Default for Settings {
                 preview_timeout_seconds: 5,
                 manual_app_override: None,
                 review_before_insert: false,
+                user_profile: String::new(),
+                adaptive_refine: default_adaptive_refine(),
             },
             stt: Stt {
                 provider: "groq".to_string(),
@@ -544,5 +562,50 @@ mod tests {
         let parsed = serde_json::from_value::<Settings>(value);
         assert!(parsed.is_ok(), "missing key must deserialize cleanly");
         assert!(parsed.unwrap().general.auto_update_check);
+    }
+
+    #[test]
+    fn prompt_mode_personalisation_defaults() {
+        let s = Settings::default();
+        assert_eq!(s.prompt_mode.user_profile, "");
+        assert!(s.prompt_mode.adaptive_refine, "adaptive refine defaults on");
+    }
+
+    #[test]
+    fn prompt_mode_personalisation_round_trips() {
+        let mut settings = Settings::default();
+        settings.prompt_mode.user_profile =
+            "iOS engineer, terse, prefer tables for comparisons".to_string();
+        settings.prompt_mode.adaptive_refine = false;
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        let parsed: Settings = serde_json::from_str(&json).expect("deserialize settings");
+        assert_eq!(
+            parsed.prompt_mode.user_profile,
+            "iOS engineer, terse, prefer tables for comparisons"
+        );
+        assert!(!parsed.prompt_mode.adaptive_refine);
+    }
+
+    #[test]
+    fn prompt_mode_personalisation_defaults_when_keys_missing() {
+        // Simulate a settings.json that predates these fields: drop both keys
+        // and confirm it still loads with the field defaults (empty profile,
+        // refine on) rather than tripping the corrupt-reset path.
+        let mut value = serde_json::to_value(Settings::default()).expect("to value");
+        let pm = value
+            .get_mut("prompt_mode")
+            .and_then(|p| p.as_object_mut())
+            .expect("prompt_mode object");
+        pm.remove("user_profile");
+        pm.remove("adaptive_refine");
+
+        let parsed = serde_json::from_value::<Settings>(value);
+        assert!(parsed.is_ok(), "missing keys must deserialize cleanly");
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.prompt_mode.user_profile, "");
+        assert!(
+            parsed.prompt_mode.adaptive_refine,
+            "missing adaptive_refine key must default to true"
+        );
     }
 }
