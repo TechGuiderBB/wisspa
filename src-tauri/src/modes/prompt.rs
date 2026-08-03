@@ -127,6 +127,63 @@ pub struct PromptOutcome {
     pub used_fallback: bool,
 }
 
+/// Chatbot openers the Sonnet system prompt's Output contract forbids but the
+/// model occasionally emits anyway ("Here is your prompt:", "Sure, …").
+/// Matched case-insensitively at the start of a line, and only at a word
+/// boundary, so legitimate content that merely begins with one of these words
+/// mid-flow ("Surely the best plan …") is never touched.
+const PREAMBLE_OPENERS: &[&str] = &["here is", "here's", "sure", "certainly", "of course"];
+
+/// Does this line open with a chatbot preamble marker? The opener must be
+/// followed by a non-alphanumeric character (or end of line) — the word
+/// boundary is what keeps false strips below real catches.
+fn is_preamble_line(line: &str) -> bool {
+    let lower = line.trim().to_lowercase();
+    PREAMBLE_OPENERS.iter().any(|opener| {
+        lower.strip_prefix(opener).map_or(false, |rest| {
+            rest.chars().next().map_or(true, |c| !c.is_alphanumeric())
+        })
+    })
+}
+
+/// Output guard: strip a leading model preamble the system prompt failed to
+/// suppress. Conservative by design — the guard engages only when the FIRST
+/// non-empty line opens with a `PREAMBLE_OPENERS` marker at a word boundary;
+/// anything else returns byte-for-byte unchanged (false-strip prevention beats
+/// completeness). When engaged, consecutive preamble lines and the blank
+/// padding around them are dropped down to the first substantive line. Every
+/// firing is logged: a rising rate is regression telemetry against the system
+/// prompt. Pure apart from that log, so it is unit-testable without a Tauri
+/// app handle.
+fn strip_leading_preamble(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut idx = match lines.iter().position(|l| !l.trim().is_empty()) {
+        Some(i) => i,
+        None => return text.to_string(), // all blank: nothing to strip
+    };
+    if !is_preamble_line(lines[idx]) {
+        return text.to_string();
+    }
+    // Engaged: walk past every consecutive preamble line (and blank padding)
+    // to the first substantive line.
+    loop {
+        match lines[idx + 1..].iter().position(|l| !l.trim().is_empty()) {
+            Some(next) => {
+                idx += 1 + next;
+                if !is_preamble_line(lines[idx]) {
+                    break;
+                }
+            }
+            None => {
+                log::warn!("prompt preamble guard fired: Sonnet output was preamble only");
+                return String::new();
+            }
+        }
+    }
+    log::warn!("prompt preamble guard fired: stripped leading preamble line(s)");
+    lines[idx..].join("\n")
+}
+
 /// Resolve the text that flows through the review/preview gates: Sonnet's
 /// rewrite when it succeeded and is non-empty, else the raw transcript. Never
 /// lose the utterance — the same philosophy as dictation mode's Haiku
@@ -254,6 +311,12 @@ pub async fn run<R: Runtime>(
         ) => r,
     };
 
+    // Output guard: strip any chatbot preamble the system prompt failed to
+    // suppress. Runs before the fallback check, so a rewrite the guard empties
+    // (preamble only, nothing substantive) takes the same raw-transcript path
+    // as a natively empty one.
+    let rewrite = rewrite.map(|text| strip_leading_preamble(&text));
+
     // On rewrite failure, fall back to the raw transcript rather than losing
     // the utterance. The fallback flows through the SAME gates below (review
     // window if enabled, else the preview countdown), so the user can still
@@ -378,7 +441,7 @@ fn first_chars(s: &str, n: usize) -> String {
 mod tests {
     use super::{
         anthropic_key_missing, classify_branch, host_from_url, rewrite_or_fallback,
-        ANTHROPIC_KEY_MISSING_TOAST,
+        strip_leading_preamble, ANTHROPIC_KEY_MISSING_TOAST,
     };
 
     #[test]
@@ -449,5 +512,74 @@ mod tests {
             assert_eq!(text, "raw words");
             assert!(fallback, "empty rewrite {empty:?} must fall back");
         }
+    }
+
+    #[test]
+    fn guard_strips_single_preamble_line_and_blank_padding() {
+        let out = strip_leading_preamble("Here is your prompt:\n\nDo the thing.");
+        assert_eq!(out, "Do the thing.");
+    }
+
+    #[test]
+    fn guard_matches_every_opener_case_insensitively() {
+        for (input, expected) in [
+            ("HERE IS the prompt:\nContent", "Content"),
+            ("Here's a polished version:\nContent", "Content"),
+            ("Sure!\nContent", "Content"),
+            ("Certainly, here it is:\nContent", "Content"),
+            ("Of course — here you go:\nContent", "Content"),
+        ] {
+            assert_eq!(strip_leading_preamble(input), expected, "input: {input}");
+        }
+    }
+
+    #[test]
+    fn guard_strips_stacked_preamble_lines() {
+        let out = strip_leading_preamble("Sure!\nHere is your prompt:\n\nContent");
+        assert_eq!(out, "Content");
+    }
+
+    #[test]
+    fn guard_skips_leading_blank_lines_before_matching() {
+        let out = strip_leading_preamble("\n\n  \nHere's your prompt:\n\nContent");
+        assert_eq!(out, "Content");
+    }
+
+    #[test]
+    fn guard_leaves_substantive_output_untouched() {
+        // No preamble opener on the first line: returned byte-for-byte.
+        let content = "Hi Sam,\n\nThanks for the update — looks good to me.\n\nBest,\nAlex";
+        assert_eq!(strip_leading_preamble(content), content);
+    }
+
+    #[test]
+    fn guard_only_inspects_the_first_non_empty_line() {
+        // An opener mid-content is legitimate text, not a preamble.
+        let content = "Hi Sam,\n\nSure, I can make it on Friday.\n\nBest,\nAlex";
+        assert_eq!(strip_leading_preamble(content), content);
+    }
+
+    #[test]
+    fn guard_requires_a_word_boundary() {
+        // "Surely" merely starts with the letters of "sure" — not a preamble.
+        let content = "Surely the best plan is to wait.";
+        assert_eq!(strip_leading_preamble(content), content);
+    }
+
+    #[test]
+    fn guard_returns_preamble_only_output_as_empty() {
+        assert_eq!(strip_leading_preamble("Sure thing!"), "");
+        // All-blank input has no preamble to strip: returned unchanged.
+        assert_eq!(strip_leading_preamble("  \n  "), "  \n  ");
+    }
+
+    #[test]
+    fn guard_emptied_rewrite_falls_back_to_raw_transcript() {
+        // Composition check: a preamble-only rewrite is stripped to empty, and
+        // the empty result takes the existing raw-transcript fallback path.
+        let guarded = strip_leading_preamble("Here is your prompt:");
+        let (text, fallback) = rewrite_or_fallback(Ok(guarded), "raw words");
+        assert_eq!(text, "raw words");
+        assert!(fallback, "guard-emptied rewrite must fall back");
     }
 }
