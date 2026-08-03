@@ -84,7 +84,13 @@ pub fn save_api_key(
     match key.as_str() {
         "GROQ_API_KEY" => state.set_groq_key(value),
         "ANTHROPIC_API_KEY" => state.set_anthropic_key(value),
-        _ => unreachable!(),
+        // A `known_keys()` entry with no AppState setter means the key is
+        // stored but would never take effect in this session. Surface that as
+        // a logged error instead of panicking the whole process.
+        other => {
+            log::error!("save_api_key: known key '{other}' has no AppState setter");
+            return Err(format!("key {other} is stored but not wired into app state"));
+        }
     }
     Ok(())
 }

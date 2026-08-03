@@ -145,12 +145,39 @@ fn applescript_quote(s: &str) -> String {
     out
 }
 
+/// Percent-encode a value for safe insertion into a URL query component:
+/// RFC 3986 unreserved characters (alphanumerics and `-._~`) pass through,
+/// everything else is UTF-8 percent-encoded. Neither `url` nor
+/// `percent-encoding` is a direct dependency, and this is the whole alphabet —
+/// no new crate needed.
+fn percent_encode_query(s: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => {
+                out.push('%');
+                out.push(HEX[(b >> 4) as usize] as char);
+                out.push(HEX[(b & 0x0f) as usize] as char);
+            }
+        }
+    }
+    out
+}
+
 /// How to transform each substituted placeholder value before insertion.
 #[derive(Clone, Copy)]
 enum QuoteMode {
     /// Insert the value as-is. Used by action types that don't pass through
-    /// a shell or AppleScript interpreter (open_url, open_app, keystroke).
+    /// a shell or AppleScript interpreter (open_app, keystroke).
     Verbatim,
+    /// Like Verbatim, except the `{query}` value is percent-encoded so a
+    /// spoken query containing `&`, `#` or spaces can't truncate the URL or
+    /// smuggle extra query params. Used by open_url.
+    OpenUrl,
     /// POSIX single-quote wrap each substituted value.
     Shell,
     /// AppleScript string-literal wrap each substituted value.
@@ -159,7 +186,9 @@ enum QuoteMode {
 
 fn apply_quote(mode: QuoteMode, value: &str) -> String {
     match mode {
-        QuoteMode::Verbatim => value.to_string(),
+        // OpenUrl percent-encodes only the `{query}` value (handled at the
+        // call site in resolve_with); every other value stays verbatim.
+        QuoteMode::Verbatim | QuoteMode::OpenUrl => value.to_string(),
         QuoteMode::Shell => shell_quote(value),
         QuoteMode::Applescript => applescript_quote(value),
     }
@@ -195,7 +224,10 @@ async fn resolve_with<R: Runtime>(
         };
         let name = &after_open[..close];
         let replacement: Option<String> = match name {
-            "query" => Some(apply_quote(mode, query)),
+            "query" => Some(match mode {
+                QuoteMode::OpenUrl => percent_encode_query(query),
+                _ => apply_quote(mode, query),
+            }),
             "clipboard" | "selected_text" => {
                 // For v1 we approximate selected text by reading the
                 // clipboard. A proper "Cmd+C then read" path lands in
@@ -230,8 +262,8 @@ async fn resolve_with<R: Runtime>(
     }
 }
 
-/// Verbatim placeholder substitution for non-shell, non-applescript action
-/// types (open_url, open_app, keystroke). Values are inserted as-is — these
+/// Verbatim placeholder substitution for non-shell, non-applescript, non-url
+/// action types (open_app, keystroke). Values are inserted as-is — these
 /// dispatch paths do not invoke a shell interpreter, so there is no
 /// metacharacter context to escape against.
 pub async fn resolve_placeholders<R: Runtime>(
@@ -240,6 +272,19 @@ pub async fn resolve_placeholders<R: Runtime>(
     query: &str,
 ) -> String {
     resolve_with(app, raw, query, QuoteMode::Verbatim).await
+}
+
+/// Placeholder substitution for `open_url` actions. The `{query}` value is
+/// percent-encoded (query-component rules) so a spoken query like "c&b #1"
+/// can't truncate the URL at `&` or smuggle in extra params/fragments.
+/// `{clipboard}`/`{active_app}` stay verbatim, and the static URL template
+/// itself is never encoded — it is authored config, not user input.
+pub async fn resolve_placeholders_url<R: Runtime>(
+    app: &AppHandle<R>,
+    raw: &str,
+    query: &str,
+) -> String {
+    resolve_with(app, raw, query, QuoteMode::OpenUrl).await
 }
 
 /// Shell-safe placeholder substitution. Every substituted value is wrapped in
@@ -302,6 +347,7 @@ pub async fn execute<R: Runtime>(
     let resolved = match action.action_type {
         ActionType::Shell => resolve_placeholders_shell(app, &action.command, query).await,
         ActionType::Applescript => resolve_placeholders_applescript(app, &action.command, query).await,
+        ActionType::OpenUrl => resolve_placeholders_url(app, &action.command, query).await,
         _ => resolve_placeholders(app, &action.command, query).await,
     };
 
@@ -819,5 +865,50 @@ mod tests {
         // pass the applescript allowlist (no `do shell script`).
         let cmd = r#"tell application "System Events" to key code 103"#;
         assert!(check_applescript(cmd).is_ok());
+    }
+
+    // ---- open_url percent-encoding ------------------------------------------
+
+    #[test]
+    fn percent_encode_query_encodes_reserved_chars() {
+        assert_eq!(percent_encode_query("c&b #1"), "c%26b%20%231");
+        assert_eq!(percent_encode_query("hello world"), "hello%20world");
+        // The RFC 3986 unreserved set passes through untouched.
+        assert_eq!(percent_encode_query("abcXYZ019-._~"), "abcXYZ019-._~");
+        // Non-ASCII is UTF-8 percent-encoded per byte.
+        assert_eq!(percent_encode_query("café"), "caf%C3%A9");
+    }
+
+    #[tokio::test]
+    async fn open_url_resolution_encodes_query_value_only() {
+        let app = tauri::test::mock_app();
+        let h = app.handle().clone();
+        // The bug: a verbatim "c&b #1" truncates the URL at `&`.
+        let out = resolve_placeholders_url(
+            &h,
+            "https://github.com/search?q={query}",
+            "c&b #1",
+        )
+        .await;
+        assert_eq!(out, "https://github.com/search?q=c%26b%20%231");
+        // The static template is authored config and is never encoded;
+        // unknown placeholders still pass through verbatim.
+        let out = resolve_placeholders_url(
+            &h,
+            "https://x.test/{unknown}?q={query}&lang=en",
+            "a&b",
+        )
+        .await;
+        assert_eq!(out, "https://x.test/{unknown}?q=a%26b&lang=en");
+    }
+
+    #[tokio::test]
+    async fn non_url_resolution_keeps_query_verbatim() {
+        let app = tauri::test::mock_app();
+        let h = app.handle().clone();
+        // open_app / keystroke keep the spoken value as-is — "open {query}"
+        // must resolve to the real app name, not an encoded form.
+        let out = resolve_placeholders(&h, "{query}", "c&b #1").await;
+        assert_eq!(out, "c&b #1");
     }
 }
