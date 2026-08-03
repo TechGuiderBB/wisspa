@@ -37,6 +37,9 @@ pub fn save_settings<R: Runtime>(
     // Apply the verbose-logging toggle immediately so it takes effect for every
     // command path (actions, diagnostics export), not just the next dictation.
     crate::redact::set_verbose(settings.general.verbose_logging);
+    // Refresh the cached hotkey behaviour (recording mode, overlay visibility)
+    // so toggle mode and the overlay gate apply without an app restart.
+    hotkeys::cache_behavior(&settings);
     // Apply pre-warm changes live so `fast_recording_start` (and any hotkey
     // change) takes effect without an app restart.
     let masks = crate::prearm::collect_masks(&[
@@ -190,6 +193,10 @@ pub async fn report_recording_timeout<R: Runtime>(
     // The timeout path never reaches process_audio, so retire the session
     // here — otherwise it stays "live" and the Esc guard keeps firing.
     crate::session::complete(session.unwrap_or(0));
+    // No Released edge follows a timeout auto-stop: clear the toggle-mode
+    // bookkeeping (and, in toggle mode, hide the overlay — press-and-hold
+    // still hides it on the user's release, unchanged).
+    hotkeys::recording_ended_without_release(&app);
     crate::sounds::play(&app, crate::sounds::Cue::Timeout);
     let active_app = crate::app_detector::frontmost_app_name().await.ok();
     let _ = history::insert(history::NewEntry {

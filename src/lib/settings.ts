@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type RecordingMode = "press_and_hold" | "toggle";
-export type Theme = "system" | "light" | "dark";
 export type MicSensitivity = "off" | "low" | "medium" | "high";
 
 export type VocabEntry = {
@@ -65,7 +64,6 @@ export type Settings = {
     recording_mode: RecordingMode;
     play_sounds: boolean;
     sound_volume: number;
-    theme: Theme;
     mic_sensitivity: MicSensitivity;
     notes_path: string;
     max_recording_seconds: number;
@@ -89,8 +87,8 @@ export type Settings = {
     review_before_insert: boolean;
   };
   stt: { provider: string; model: string; language: string };
-  cleanup_llm: { provider: string; model: string };
-  prompt_llm: { provider: string; model: string };
+  cleanup_llm: { provider: string };
+  prompt_llm: { provider: string };
   onboarding_completed: boolean;
   mic_calibration: MicCalibration | null;
   vocabulary: VocabEntry[];
