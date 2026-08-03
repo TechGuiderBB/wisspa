@@ -37,6 +37,9 @@ let activeStream: MediaStream | null = null;
 // Pre-warmed stream held open between a hotkey-modifier press and the full
 // combo, so `startRecording` can skip the cold getUserMedia. See prearm.rs.
 let warmStream: MediaStream | null = null;
+// The device the retained warm stream was opened with. A warm stream from a
+// previously selected input must not be promoted after the setting changes.
+let warmDeviceId: string | undefined;
 let analyserCtx: AudioContext | null = null;
 let analyser: AnalyserNode | null = null;
 let analyserBuffer: Uint8Array | null = null;
@@ -56,9 +59,34 @@ function pickMime(): string {
   return "";
 }
 
-async function acquireHealthyStream(): Promise<MediaStream> {
+/// Open an input stream on the preferred device. A saved device that has
+/// since vanished (USB mic unplugged) must never hard-fail a recording:
+/// NotFoundError/OverconstrainedError fall back to the system default input.
+async function openInputStream(deviceId?: string): Promise<MediaStream> {
+  if (!deviceId) {
+    return navigator.mediaDevices.getUserMedia({ audio: true });
+  }
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: { exact: deviceId } },
+    });
+  } catch (err) {
+    if (
+      err instanceof DOMException &&
+      (err.name === "NotFoundError" || err.name === "OverconstrainedError")
+    ) {
+      console.warn(
+        `selected input device unavailable, falling back to system default: ${err.message}`,
+      );
+      return navigator.mediaDevices.getUserMedia({ audio: true });
+    }
+    throw err;
+  }
+}
+
+async function acquireHealthyStream(deviceId?: string): Promise<MediaStream> {
   const tryOnce = async (): Promise<MediaStream> => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const stream = await openInputStream(deviceId);
     const tracks = stream.getAudioTracks();
     if (tracks.length === 0) {
       stream.getTracks().forEach((t) => t.stop());
@@ -128,13 +156,14 @@ function teardownAnalyser() {
 }
 
 /// Open the mic stream ahead of a full hotkey press and retain it. No-op if a
-/// warm stream already exists or a recording is in progress.
-export async function warmMic(): Promise<void> {
+/// warm stream already exists or a recording is in progress. Warms the same
+/// input device `startRecording` would use.
+export async function warmMic(deviceId?: string): Promise<void> {
   if (warmStream || (mediaRecorder && mediaRecorder.state === "recording")) {
     return;
   }
   try {
-    const stream = await acquireHealthyStream();
+    const stream = await acquireHealthyStream(deviceId);
     // A recording may have started (cold) while getUserMedia was in flight.
     // If so this warm stream is redundant — stop it now rather than orphan an
     // open mic with no consumer, which would leave the indicator stuck on.
@@ -148,9 +177,11 @@ export async function warmMic(): Promise<void> {
       return;
     }
     warmStream = stream;
+    warmDeviceId = deviceId;
   } catch (err) {
     console.warn("warmMic failed:", err);
     warmStream = null;
+    warmDeviceId = undefined;
   }
 }
 
@@ -162,20 +193,26 @@ export function releaseWarmStream(): void {
     warmStream.getTracks().forEach((t) => t.stop());
   }
   warmStream = null;
+  warmDeviceId = undefined;
 }
 
-export async function startRecording(): Promise<void> {
+export async function startRecording(deviceId?: string): Promise<void> {
   if (starting) return;
   if (mediaRecorder && mediaRecorder.state === "recording") return;
   starting = true;
   try {
     let stream: MediaStream;
-    if (warmStream && warmStream.getAudioTracks()[0]?.readyState === "live") {
+    if (
+      warmStream &&
+      warmDeviceId === deviceId &&
+      warmStream.getAudioTracks()[0]?.readyState === "live"
+    ) {
       stream = warmStream;
       warmStream = null;
+      warmDeviceId = undefined;
     } else {
       releaseWarmStream();
-      stream = await acquireHealthyStream();
+      stream = await acquireHealthyStream(deviceId);
     }
     activeStream = stream;
     chunks = [];
@@ -287,12 +324,17 @@ export async function blobToBase64(blob: Blob): Promise<string> {
 //
 // Capture-only flows for the onboarding wizard. They reuse the same
 // AnalyserNode pipeline but skip MediaRecorder when only peak data is needed.
+// Both take the selected input device so calibration measures the mic the
+// user will actually record with (undefined = system default).
 
 export type AmbientSample = { peakAmplitude: number; durationMs: number };
 export type SpeechSample = AmbientSample & { bytesPerSecond: number };
 
-export async function sampleAmbient(durationMs: number): Promise<AmbientSample> {
-  const stream = await acquireHealthyStream();
+export async function sampleAmbient(
+  durationMs: number,
+  deviceId?: string,
+): Promise<AmbientSample> {
+  const stream = await acquireHealthyStream(deviceId);
   try {
     startAnalyser(stream);
     await new Promise((r) => setTimeout(r, durationMs));
@@ -305,8 +347,11 @@ export async function sampleAmbient(durationMs: number): Promise<AmbientSample> 
   }
 }
 
-export async function sampleSpeech(durationMs: number): Promise<SpeechSample> {
-  const stream = await acquireHealthyStream();
+export async function sampleSpeech(
+  durationMs: number,
+  deviceId?: string,
+): Promise<SpeechSample> {
+  const stream = await acquireHealthyStream(deviceId);
   const mime = pickMime();
   const recorder = mime
     ? new MediaRecorder(stream, { mimeType: mime })

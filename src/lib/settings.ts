@@ -72,6 +72,7 @@ export type Settings = {
     fast_recording_start: boolean;
     quiet_notifications: boolean;
     verbose_logging: boolean;
+    input_device_id: string;
   };
   hotkeys: {
     dictation: string;

@@ -181,7 +181,7 @@ function Runtime() {
       sessionRef.current = payload?.session ?? 0;
       try {
         setError(null);
-        await startRecording();
+        await startRecording(settingsRef.current?.general.input_device_id || undefined);
         setRecording(true);
         // Arm the max-recording-duration timer so a stuck-down hotkey
         // (or modifier+key combo held during typing) can't capture
@@ -305,7 +305,7 @@ function Runtime() {
     // the mic when the hotkey's modifier is held, and releases it if the combo
     // is never completed.
     listen(PREWARM_EVENT, () => {
-      void warmMic();
+      void warmMic(settingsRef.current?.general.input_device_id || undefined);
     }).then(track);
 
     listen(PREWARM_CANCEL_EVENT, () => {
