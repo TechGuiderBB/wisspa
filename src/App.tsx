@@ -188,7 +188,7 @@ function Runtime() {
 
     listen<string>(MODE_EVENT, (e) => {
       const m = e.payload as RecordingMode;
-      if (m === "dictation" || m === "action" || m === "prompt") {
+      if (m === "dictation" || m === "action" || m === "prompt" || m === "command") {
         modeRef.current = m;
       }
     }).then(track);
@@ -200,7 +200,8 @@ function Runtime() {
       if (
         payload?.mode === "dictation" ||
         payload?.mode === "action" ||
-        payload?.mode === "prompt"
+        payload?.mode === "prompt" ||
+        payload?.mode === "command"
       ) {
         modeRef.current = payload.mode;
       }
@@ -248,7 +249,10 @@ function Runtime() {
       // Fall back to the refs if an older backend omitted the payload.
       const payload = e.payload;
       const mode: RecordingMode =
-        payload?.mode === "dictation" || payload?.mode === "action" || payload?.mode === "prompt"
+        payload?.mode === "dictation" ||
+        payload?.mode === "action" ||
+        payload?.mode === "prompt" ||
+        payload?.mode === "command"
           ? payload.mode
           : modeRef.current;
       const session = payload?.session ?? sessionRef.current;
@@ -388,9 +392,11 @@ function Runtime() {
   const thinkingLabel =
     processingMode === "prompt"
       ? "Writing prompt..."
-      : processingMode === "action"
-        ? "Running..."
-        : "Transcribing...";
+      : processingMode === "command"
+        ? "Transforming..."
+        : processingMode === "action"
+          ? "Running..."
+          : "Transcribing...";
 
   // Background colour for the route flash adapts to the detected destination type.
   const flashBg =

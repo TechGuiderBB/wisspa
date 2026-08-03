@@ -8,13 +8,14 @@
 
 ## What it does
 
-Three modes, three hotkeys:
+Four modes, four hotkeys:
 
 | Mode | Default hotkey | What happens |
 |---|---|---|
 | **Dictation** | `Cmd+Shift+Space` | Speech → Groq Whisper → Claude Haiku cleanup (filler-word removal, punctuation, app-aware tone) → pasted into the focused field |
 | **Action** | `Cmd+Shift+A` | Speech → match against the editable YAML action registry → run the matched action (shell / AppleScript / open URL / open app / keystroke) |
 | **Prompt** | `Cmd+Shift+P` | Speech (+ optional selected text) → Claude Sonnet rewrites into a structured AI prompt formatted for the focused AI tool (Claude / ChatGPT / Cursor / Gemini) → pasted |
+| **Command** | `Cmd+Shift+C` | Spoken instruction ("make this formal", "translate to French") + the current selection → Claude Haiku applies the instruction to the selected text → pasted back over the selection. No selection → toast, no API call |
 | **Cancel** | `Esc` | Aborts the current recording, no API call |
 
 A small "Wisspa" pill lives at the top-center of the monitor your cursor is on; it flashes red while you're recording.
@@ -150,7 +151,7 @@ Tauri 2 app
 │   ├── app_detector   · AppleScript `System Events` frontmost app
 │   ├── selection.rs   · Cmd+C trick + clipboard save/restore
 │   ├── actions/       · YAML registry, file watcher, matcher, executor
-│   ├── modes/         · dictation, action, prompt pipelines
+│   ├── modes/         · dictation, action, prompt, command pipelines
 │   ├── permissions.rs · AX trust, screen-rec preflight, automation probe
 │   ├── keychain.rs    · macOS Keychain via the `keyring` crate
 │   ├── settings_store · JSON-on-disk per §6.1

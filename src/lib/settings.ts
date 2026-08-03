@@ -88,6 +88,7 @@ export type Settings = {
     dictation: string;
     action: string;
     prompt: string;
+    command: string;
     cancel: string;
   };
   prompt_mode: {
@@ -108,7 +109,7 @@ export type Settings = {
   profiles: AppProfile[];
 };
 
-export const HOTKEY_ACTIONS = ["dictation", "action", "prompt", "cancel"] as const;
+export const HOTKEY_ACTIONS = ["dictation", "action", "prompt", "command", "cancel"] as const;
 export type HotkeyAction = (typeof HOTKEY_ACTIONS)[number];
 
 export const API_PROVIDERS = ["groq", "anthropic"] as const;
