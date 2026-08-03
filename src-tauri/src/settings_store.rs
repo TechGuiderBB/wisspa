@@ -102,7 +102,6 @@ pub struct General {
     pub recording_mode: String, // "press_and_hold" | "toggle"
     pub play_sounds: bool,
     pub sound_volume: f32,
-    pub theme: String, // "system" | "light" | "dark"
     #[serde(default = "default_mic_sensitivity")]
     pub mic_sensitivity: String, // "off" | "low" | "medium" | "high"
     /// Destination file for the `new_note` voice action. Tilde-expanded
@@ -197,7 +196,10 @@ pub struct Stt {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Llm {
     pub provider: String,
-    pub model: String,
+    // Model choice is code-managed (`llm.rs` constants): the schema once
+    // carried a `model` field here but nothing ever read it. Legacy keys in
+    // existing settings.json files are ignored on load (serde default).
+    // A future eval-harnessed change can reintroduce curated model choice.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -245,7 +247,6 @@ impl Default for Settings {
                 recording_mode: "press_and_hold".to_string(),
                 play_sounds: true,
                 sound_volume: 0.5,
-                theme: "system".to_string(),
                 mic_sensitivity: "medium".to_string(),
                 notes_path: default_notes_path(),
                 max_recording_seconds: default_max_recording_seconds(),
@@ -278,11 +279,9 @@ impl Default for Settings {
             },
             cleanup_llm: Llm {
                 provider: "anthropic".to_string(),
-                model: "claude-haiku-4-5-20251001".to_string(),
             },
             prompt_llm: Llm {
                 provider: "anthropic".to_string(),
-                model: "claude-sonnet-4-6".to_string(),
             },
             onboarding_completed: false,
             mic_calibration: None,
@@ -425,5 +424,45 @@ mod tests {
         let parsed = serde_json::from_value::<Settings>(value);
         assert!(parsed.is_ok(), "missing key must deserialize cleanly");
         assert!(!parsed.unwrap().general.dictation_complete_sound);
+    }
+
+    #[test]
+    fn legacy_theme_and_llm_model_keys_are_ignored() {
+        // settings.json written by a build that still had `general.theme` and
+        // `cleanup_llm`/`prompt_llm.model` must keep loading after those fields
+        // were removed — serde ignores unknown keys, so no migration is needed.
+        let mut value = serde_json::to_value(Settings::default()).expect("to value");
+        value["general"]["theme"] = serde_json::json!("dark");
+        value["cleanup_llm"]["model"] = serde_json::json!("claude-haiku-4-5-20251001");
+        value["prompt_llm"]["model"] = serde_json::json!("claude-sonnet-4-6");
+
+        let parsed = serde_json::from_value::<Settings>(value);
+        assert!(
+            parsed.is_ok(),
+            "legacy keys must not break loading: {:?}",
+            parsed.err()
+        );
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.cleanup_llm.provider, "anthropic");
+        assert_eq!(parsed.prompt_llm.provider, "anthropic");
+    }
+
+    #[test]
+    fn stt_model_and_language_round_trip() {
+        // The settings UI now writes these; guard the serde contract both ways.
+        let mut settings = Settings::default();
+        settings.stt.model = "distil-whisper-large-v3-en".to_string();
+        settings.stt.language = String::new(); // empty == auto-detect
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        let parsed: Settings = serde_json::from_str(&json).expect("deserialize settings");
+        assert_eq!(parsed.stt.model, "distil-whisper-large-v3-en");
+        assert_eq!(parsed.stt.language, "");
+    }
+
+    #[test]
+    fn stt_defaults_are_turbo_and_english() {
+        let s = Settings::default();
+        assert_eq!(s.stt.model, "whisper-large-v3-turbo");
+        assert_eq!(s.stt.language, "en");
     }
 }

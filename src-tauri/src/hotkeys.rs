@@ -40,10 +40,77 @@ struct StopPayload {
 
 /// Mode → session id of the in-flight recording for that mode, so the release
 /// handler can emit the session its own press began rather than whatever the
-/// frontend last saw.
+/// frontend last saw. In toggle mode this map doubles as the "is this mode
+/// recording?" flag: present = a press started it, absent = idle.
 fn recording_sessions() -> &'static Mutex<HashMap<&'static str, u64>> {
     static M: OnceLock<Mutex<HashMap<&'static str, u64>>> = OnceLock::new();
     M.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Drop every in-flight press→session binding. Terminal paths that end a
+/// recording without a Released edge (Esc cancel, timeout auto-stop) call this
+/// so toggle mode doesn't read a stale binding as "recording active" and
+/// swallow the next press as a no-op stop.
+fn clear_recording_sessions() {
+    if let Ok(mut m) = recording_sessions().lock() {
+        m.clear();
+    }
+}
+
+/// Behaviour flags the global-shortcut hot path needs on every event. Cached
+/// here so a hotkey press does no settings.json disk I/O; refreshed at startup
+/// (`register_default_shortcuts`) and on every save (`commands::save_settings`).
+#[derive(Clone)]
+struct HotkeyBehavior {
+    recording_mode: String,
+    show_overlay: bool,
+}
+
+fn behavior_cache() -> &'static Mutex<HotkeyBehavior> {
+    static B: OnceLock<Mutex<HotkeyBehavior>> = OnceLock::new();
+    B.get_or_init(|| {
+        Mutex::new(HotkeyBehavior {
+            recording_mode: "press_and_hold".to_string(),
+            show_overlay: true,
+        })
+    })
+}
+
+fn cached_behavior() -> HotkeyBehavior {
+    behavior_cache()
+        .lock()
+        .map(|b| b.clone())
+        .unwrap_or_else(|_| HotkeyBehavior {
+            recording_mode: "press_and_hold".to_string(),
+            show_overlay: true,
+        })
+}
+
+/// Refresh the cached hotkey behaviour from settings so recording-mode and
+/// overlay-visibility changes apply live, without an app restart.
+pub fn cache_behavior(settings: &crate::settings_store::Settings) {
+    if let Ok(mut b) = behavior_cache().lock() {
+        b.recording_mode = settings.general.recording_mode.clone();
+        b.show_overlay = settings.general.show_overlay;
+    }
+}
+
+/// What a Pressed edge should do for a recording hotkey.
+#[derive(Debug, PartialEq, Eq)]
+enum PressAction {
+    Start,
+    Stop,
+}
+
+/// Toggle mode flips between start and stop on each Pressed edge;
+/// press-and-hold always starts on press (its Released edge stops). Pure so it
+/// can be unit-tested without an AppHandle.
+fn press_action(recording_mode: &str, session_active: bool) -> PressAction {
+    if recording_mode == "toggle" && session_active {
+        PressAction::Stop
+    } else {
+        PressAction::Start
+    }
 }
 
 fn on_press<R: Runtime>(app: &AppHandle<R>, mode: &'static str) {
@@ -66,6 +133,43 @@ fn on_release<R: Runtime>(app: &AppHandle<R>, mode: &'static str) {
         .and_then(|mut m| m.remove(mode))
         .unwrap_or(0);
     let _ = app.emit(EVENT_STOP, StopPayload { mode, session });
+}
+
+fn handle_press<R: Runtime>(app: &AppHandle<R>, mode: &'static str) {
+    log::info!("{mode} hotkey pressed");
+    let behavior = cached_behavior();
+    let session_active = recording_sessions()
+        .lock()
+        .ok()
+        .map(|m| m.contains_key(mode))
+        .unwrap_or(false);
+    match press_action(&behavior.recording_mode, session_active) {
+        PressAction::Start => on_press(app, mode),
+        // Toggle mode: the second press stops and processes — exactly what a
+        // push-to-talk release does — so both paths share `on_release`.
+        PressAction::Stop => on_release(app, mode),
+    }
+}
+
+fn handle_release<R: Runtime>(app: &AppHandle<R>, mode: &'static str) {
+    if cached_behavior().recording_mode == "toggle" {
+        // Toggle start/stop both live on the Pressed edge; the Released edge
+        // of a toggle tap must not stop the recording that press just started.
+        return;
+    }
+    log::info!("{mode} hotkey released");
+    on_release(app, mode);
+}
+
+/// A recording ended with no Released edge to come (max-duration auto-stop):
+/// clear the toggle bookkeeping, and in toggle mode hide the overlay too — in
+/// press-and-hold the user's release still follows and runs `on_release`, so
+/// nothing changes there beyond the binding clear it would have done anyway.
+pub fn recording_ended_without_release<R: Runtime>(app: &AppHandle<R>) {
+    clear_recording_sessions();
+    if cached_behavior().recording_mode == "toggle" {
+        hide_overlay(app);
+    }
 }
 
 /// Action → currently registered shortcut. Used so the runtime handler can
@@ -103,8 +207,13 @@ fn show_overlay<R: Runtime>(app: &AppHandle<R>) {
     // on at startup (usually the primary), out of sight when the user is
     // working on a secondary screen.
     crate::position_overlay_top_center(app);
-    if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
-        let _ = w.show();
+    // Honour the "Show recording overlay" setting: when off, the pill window
+    // stays hidden — the tray icon below and the runtime pill's status flash
+    // still signal that recording is live.
+    if cached_behavior().show_overlay {
+        if let Some(w) = app.get_webview_window(OVERLAY_LABEL) {
+            let _ = w.show();
+        }
     }
     // Tray icon tints + tooltip swaps to the recording indicator alongside
     // the overlay so the menu bar shows mic state even when the pill is occluded.
@@ -126,30 +235,12 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 None => return,
             };
             match (action.as_str(), event.state()) {
-                ("dictation", ShortcutState::Pressed) => {
-                    log::info!("dictation hotkey pressed");
-                    on_press(app, "dictation");
-                }
-                ("dictation", ShortcutState::Released) => {
-                    log::info!("dictation hotkey released");
-                    on_release(app, "dictation");
-                }
-                ("action", ShortcutState::Pressed) => {
-                    log::info!("action hotkey pressed");
-                    on_press(app, "action");
-                }
-                ("action", ShortcutState::Released) => {
-                    log::info!("action hotkey released");
-                    on_release(app, "action");
-                }
-                ("prompt", ShortcutState::Pressed) => {
-                    log::info!("prompt hotkey pressed");
-                    on_press(app, "prompt");
-                }
-                ("prompt", ShortcutState::Released) => {
-                    log::info!("prompt hotkey released");
-                    on_release(app, "prompt");
-                }
+                ("dictation", ShortcutState::Pressed) => handle_press(app, "dictation"),
+                ("dictation", ShortcutState::Released) => handle_release(app, "dictation"),
+                ("action", ShortcutState::Pressed) => handle_press(app, "action"),
+                ("action", ShortcutState::Released) => handle_release(app, "action"),
+                ("prompt", ShortcutState::Pressed) => handle_press(app, "prompt"),
+                ("prompt", ShortcutState::Released) => handle_release(app, "prompt"),
                 ("cancel", ShortcutState::Pressed) => {
                     // Esc is registered as a GLOBAL shortcut, so it fires on
                     // every Esc press in every app. Without a live recording
@@ -170,6 +261,10 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     // Aborts the in-flight pipeline backend-side: cancels any
                     // running STT/LLM request and blocks injection (issue #31).
                     crate::session::cancel_active();
+                    // The recording ended without a Released edge — drop the
+                    // press→session bindings so the next toggle-mode press
+                    // starts fresh instead of stopping a stale binding.
+                    clear_recording_sessions();
                     let _ = app.emit(EVENT_CANCEL, ());
                 }
                 _ => {}
@@ -182,6 +277,9 @@ pub fn register_default_shortcuts<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let settings = crate::settings_store::load(app).unwrap_or_default();
+    // Seed the hot-path behaviour cache (recording mode, overlay visibility);
+    // `commands::save_settings` refreshes it on every later change.
+    cache_behavior(&settings);
     for (action, combo) in [
         ("dictation", settings.hotkeys.dictation.as_str()),
         ("action", settings.hotkeys.action.as_str()),
@@ -262,4 +360,23 @@ pub fn resume_all<R: Runtime>(app: &AppHandle<R>) -> Result<()> {
     }
     log::info!("global shortcuts resumed");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{press_action, PressAction};
+
+    #[test]
+    fn press_and_hold_always_starts_on_press() {
+        assert_eq!(press_action("press_and_hold", false), PressAction::Start);
+        // A stale binding never turns a press-and-hold press into a stop —
+        // only its Released edge stops the recording.
+        assert_eq!(press_action("press_and_hold", true), PressAction::Start);
+    }
+
+    #[test]
+    fn toggle_alternates_start_and_stop_on_the_pressed_edge() {
+        assert_eq!(press_action("toggle", false), PressAction::Start);
+        assert_eq!(press_action("toggle", true), PressAction::Stop);
+    }
 }

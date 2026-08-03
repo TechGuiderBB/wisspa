@@ -57,10 +57,11 @@ pub async fn transcribe_audio(
         return Err(anyhow!("empty audio buffer"));
     }
 
-    // Settings dropdowns can legitimately be blank when the user has never
-    // touched them; fall back to the shipped defaults rather than POSTing an
-    // empty form field to Groq.
-    let language = if language.trim().is_empty() { "en" } else { language };
+    // The model dropdown can legitimately be blank when the user has never
+    // touched it; fall back to the shipped default rather than POSTing an
+    // empty form field to Groq. Language is different: blank means
+    // "auto-detect", which Groq does when the parameter is omitted entirely
+    // (handled at form-build time below).
     let model = if model.trim().is_empty() { GROQ_MODEL } else { model };
 
     // MediaRecorder mime often includes a codec parameter ("audio/webm; codecs=opus").
@@ -92,8 +93,12 @@ pub async fn transcribe_audio(
             // and avg_logprob) that the confidence gate in commands.rs uses to
             // spot silence/noise hallucinations without a phrase denylist.
             .text("response_format", "verbose_json")
-            .text("language", language.to_string())
             .text("temperature", "0");
+        // Only pin a language when one is set — an empty setting means
+        // auto-detect, and Groq auto-detects when the field is absent.
+        if !language.trim().is_empty() {
+            form = form.text("language", language.to_string());
+        }
         if let Some(hint) = vocab_hint {
             if !hint.is_empty() {
                 form = form.text("prompt", hint.to_string());

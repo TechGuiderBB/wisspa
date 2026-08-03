@@ -23,7 +23,7 @@ type TabId =
   | "about";
 
 const TABS: { id: TabId; label: string; icon: string; subtitle: string }[] = [
-  { id: "general", label: "General", icon: "⚙", subtitle: "Launch, sounds, theme" },
+  { id: "general", label: "General", icon: "⚙", subtitle: "Launch, recording & transcription" },
   { id: "apikeys", label: "API Keys", icon: "🔑", subtitle: "Groq & Anthropic" },
   { id: "hotkeys", label: "Hotkeys", icon: "⌨", subtitle: "Triggers for each mode" },
   { id: "actions", label: "Actions", icon: "🪄", subtitle: "Voice commands" },
@@ -64,6 +64,10 @@ export default function SettingsPage() {
   function patchPromptMode(p: Partial<Settings["prompt_mode"]>) {
     if (!settings) return;
     persist({ ...settings, prompt_mode: { ...settings.prompt_mode, ...p } });
+  }
+  function patchStt(p: Partial<Settings["stt"]>) {
+    if (!settings) return;
+    persist({ ...settings, stt: { ...settings.stt, ...p } });
   }
   function patchVocab(vocabulary: VocabEntry[]) {
     if (!settings) return;
@@ -137,7 +141,7 @@ export default function SettingsPage() {
 
         <div className="px-8 py-6">
           {active === "general" && (
-            <GeneralTab settings={settings} patch={patchGeneral} />
+            <GeneralTab settings={settings} patch={patchGeneral} patchStt={patchStt} />
           )}
           {active === "apikeys" && <ApiKeysTab />}
           {active === "hotkeys" && (

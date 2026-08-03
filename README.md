@@ -128,7 +128,7 @@ When you hold the prompt hotkey:
 
 Click the menu-bar microphone icon → **Open Settings…** Seven tabs:
 
-- **General** — launch on login, overlay visibility, recording mode (press-and-hold / toggle), sound, theme.
+- **General** — launch on login, overlay visibility, recording mode (press-and-hold / toggle), max recording length, transcription model + language, sound.
 - **API Keys** — Groq + Anthropic, stored in macOS Keychain. Test buttons hit each provider's `/models` endpoint.
 - **Hotkeys** — click a row, press your desired combo. Single keys like `F18` / `F19` work. Reset to defaults available.
 - **Actions** — registry overview and link to the YAML folder.
