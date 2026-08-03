@@ -4,12 +4,17 @@ import {
   clearHistory,
   exportHistoryCsv,
   getHistory,
+  reinjectText,
 } from "../../lib/settings";
-import { Button } from "./ui";
+import { Button, Select } from "./ui";
+
+type ModeFilter = "all" | "dictation" | "prompt" | "action";
 
 export default function HistoryTab() {
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
 
   async function refresh() {
     try {
@@ -67,12 +72,27 @@ export default function HistoryTab() {
     );
   }
 
+  // Client-side filter over the already-loaded entries (display cap is 100).
+  // The search text is the same output-first text the row displays and copies.
+  const q = query.trim().toLowerCase();
+  const filtering = q !== "" || modeFilter !== "all";
+  const filtered = entries.filter((e) => {
+    if (modeFilter !== "all" && e.mode !== modeFilter) return false;
+    if (q) {
+      const text = (e.output ?? e.raw_transcript ?? "").toLowerCase();
+      if (!text.includes(q)) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="text-xs text-slate-500">
-          Showing {entries.length} most recent · stored locally in{" "}
-          <code className="font-mono">history.db</code>
+          {filtering
+            ? `Showing ${filtered.length} of ${entries.length} loaded entries`
+            : `Showing ${entries.length} most recent`}{" "}
+          · stored locally in <code className="font-mono">history.db</code>
         </div>
         <div className="flex gap-2">
           <Button variant="secondary" onClick={onExport} disabled={busy}>
@@ -84,26 +104,53 @@ export default function HistoryTab() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
-        <table className="w-full text-xs">
-          <thead className="bg-slate-50 text-slate-600">
-            <tr>
-              <th className="text-left px-3 py-2 font-medium">When</th>
-              <th className="text-left px-3 py-2 font-medium">Mode</th>
-              <th className="text-left px-3 py-2 font-medium">App</th>
-              <th className="text-left px-3 py-2 font-medium">Snippet</th>
-              <th className="text-right px-3 py-2 font-medium">ms</th>
-              <th className="text-left px-3 py-2 font-medium">Status</th>
-              <th className="text-right px-3 py-2 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {entries.map((e) => (
-              <Row key={e.id} entry={e} />
-            ))}
-          </tbody>
-        </table>
+      <div className="flex items-center gap-2">
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search history…"
+          aria-label="Search history"
+          className="flex-1 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/30"
+        />
+        <Select<ModeFilter>
+          value={modeFilter}
+          onChange={setModeFilter}
+          options={[
+            { value: "all", label: "All modes" },
+            { value: "dictation", label: "Dictation" },
+            { value: "prompt", label: "Prompt" },
+            { value: "action", label: "Action" },
+          ]}
+        />
       </div>
+
+      {filtered.length === 0 ? (
+        <div className="rounded-md bg-slate-50 border border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
+          No entries match your search.
+        </div>
+      ) : (
+        <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+          <table className="w-full text-xs">
+            <thead className="bg-slate-50 text-slate-600">
+              <tr>
+                <th className="text-left px-3 py-2 font-medium">When</th>
+                <th className="text-left px-3 py-2 font-medium">Mode</th>
+                <th className="text-left px-3 py-2 font-medium">App</th>
+                <th className="text-left px-3 py-2 font-medium">Snippet</th>
+                <th className="text-right px-3 py-2 font-medium">ms</th>
+                <th className="text-left px-3 py-2 font-medium">Status</th>
+                <th className="text-right px-3 py-2 font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((e) => (
+                <Row key={e.id} entry={e} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -121,15 +168,19 @@ function Row({ entry }: { entry: HistoryEntry }) {
   const [draft, setDraft] = useState("");
   const [editCopied, setEditCopied] = useState(false);
   const [editCopyFailed, setEditCopyFailed] = useState(false);
+  const [injecting, setInjecting] = useState(false);
+  const [injectFailed, setInjectFailed] = useState(false);
 
   // Store timer IDs so we can clear them on unmount (prevents setState on unmounted row).
   const copyTimerRef = useRef<number | null>(null);
   const editCopyTimerRef = useRef<number | null>(null);
+  const injectTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
       if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
       if (editCopyTimerRef.current !== null) window.clearTimeout(editCopyTimerRef.current);
+      if (injectTimerRef.current !== null) window.clearTimeout(injectTimerRef.current);
     };
   }, []);
 
@@ -184,8 +235,27 @@ function Row({ entry }: { entry: HistoryEntry }) {
     setEditing(!editing);
   }
 
+  // Paste the entry's text again into whatever app is frontmost right now.
+  // Re-inject targets the *live* frontmost app by design — the destination is
+  // whichever field the user focuses before clicking, not the original app.
+  async function handleReinject() {
+    setInjecting(true);
+    try {
+      await reinjectText(text);
+      setInjectFailed(false);
+    } catch (err) {
+      console.error("Re-inject failed:", err);
+      setInjectFailed(true);
+      if (injectTimerRef.current !== null) window.clearTimeout(injectTimerRef.current);
+      injectTimerRef.current = window.setTimeout(() => setInjectFailed(false), 2000);
+    } finally {
+      setInjecting(false);
+    }
+  }
+
   const copyLabel = copyFailed ? "Failed" : copied ? "Copied" : "Copy";
   const editCopyLabel = editCopyFailed ? "Failed" : editCopied ? "Copied" : "Copy edited";
+  const reinjectLabel = injecting ? "Pasting…" : injectFailed ? "Failed" : "Paste again";
 
   // NOTE: colSpan={7} must match the 7-column thead above (When, Mode, App, Snippet, ms, Status, Actions).
   return (
@@ -242,6 +312,15 @@ function Row({ entry }: { entry: HistoryEntry }) {
               aria-expanded={editing}
             >
               Re-use
+            </Button>
+            <Button
+              variant="ghost"
+              className="px-2 py-1 text-xs"
+              disabled={!hasText || injecting}
+              title="Paste this text into the currently focused app"
+              onClick={handleReinject}
+            >
+              {reinjectLabel}
             </Button>
           </div>
         </td>

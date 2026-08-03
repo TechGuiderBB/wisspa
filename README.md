@@ -133,7 +133,7 @@ Click the menu-bar microphone icon → **Open Settings…** Seven tabs:
 - **Hotkeys** — click a row, press your desired combo. Single keys like `F18` / `F19` work. Reset to defaults available.
 - **Actions** — registry overview and link to the YAML folder.
 - **Prompt Mode** — include selected text, show preview, preview timeout, manual app override.
-- **History** — the last 100 dictations / actions / prompts, exportable as CSV, clearable.
+- **History** — searchable and filterable by mode; the most recent 100 entries are shown (storage keeps the last 1000), exportable as CSV, clearable.
 - **About** — live permissions diagnostic with deep links into System Settings.
 
 ---
