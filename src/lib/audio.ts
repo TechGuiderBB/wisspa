@@ -24,6 +24,13 @@ export type RecordingResult = {
 const PREFERRED_MIME = "audio/webm;codecs=opus";
 const SAMPLE_INTERVAL_MS = 100;
 
+/// Live per-interval input peak (0–128 deviation from the uint8 midpoint),
+/// broadcast from this window at the analyser's 10 Hz sample rate so the
+/// recording overlay can render a level meter without a Rust round-trip
+/// (same window-to-window pattern as `wisspa://recording-armed`). Also fires
+/// during onboarding calibration samples — harmless, no listener is shown.
+export const INPUT_LEVEL_EVENT = "wisspa://input-level";
+
 let mediaRecorder: MediaRecorder | null = null;
 let chunks: Blob[] = [];
 let activeStream: MediaStream | null = null;
@@ -99,6 +106,7 @@ function startAnalyser(stream: MediaStream) {
         if (dev > localMax) localMax = dev;
       }
       if (localMax > peakAmplitude) peakAmplitude = localMax;
+      void emit(INPUT_LEVEL_EVENT, localMax);
     }, SAMPLE_INTERVAL_MS);
   } catch (err) {
     console.warn("AnalyserNode setup failed; continuing without peak tracking:", err);
