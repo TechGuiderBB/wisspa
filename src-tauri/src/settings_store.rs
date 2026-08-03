@@ -76,6 +76,68 @@ fn replace_word_ci(text: &str, from: &str, to: &str) -> String {
     out
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppProfile {
+    /// Matched case-insensitively as a substring of the detected active-app
+    /// name (e.g. "slack" matches "Slack"). The first profile in the list
+    /// whose `app` matches wins — order is significant.
+    pub app: String,
+    /// Free-text tone guidance ("casual, no greetings") appended to the
+    /// dictation cleanup system prompt when this profile matches.
+    pub tone: String,
+    /// Extra vocabulary for this app: words the STT hint should bias towards
+    /// and that global vocabulary substitution must not rewrite. Profile
+    /// words take precedence over a global entry with the same `spoken` word.
+    pub vocab: Vec<String>,
+}
+
+/// Find the first profile whose `app` pattern appears in `active_app`,
+/// case-insensitively. Profiles with an empty/blank `app` never match.
+pub fn match_profile<'a>(profiles: &'a [AppProfile], active_app: &str) -> Option<&'a AppProfile> {
+    let haystack = active_app.to_lowercase();
+    profiles.iter().find(|p| {
+        let needle = p.app.trim();
+        !needle.is_empty() && haystack.contains(&needle.to_lowercase())
+    })
+}
+
+/// Effective vocabulary for one dictation run when `profile_vocab` applies:
+/// the profile's words (as identity entries, profile order first) followed by
+/// the global entries — except any global entry whose `spoken` word collides
+/// with a profile word, which is dropped so the profile wins on conflict.
+/// An identity entry is a no-op for substitution itself; its effect is that
+/// the word is shielded from a conflicting global rewrite, and the ordering
+/// puts profile words first in the STT hint built from the merged list.
+pub fn merge_profile_vocabulary(
+    global: &[VocabEntry],
+    profile_vocab: &[String],
+) -> Vec<VocabEntry> {
+    if profile_vocab.is_empty() {
+        return global.to_vec();
+    }
+    let profile_words: std::collections::HashSet<String> = profile_vocab
+        .iter()
+        .map(|w| w.trim().to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let mut merged: Vec<VocabEntry> = profile_vocab
+        .iter()
+        .map(|w| w.trim())
+        .filter(|w| !w.is_empty())
+        .map(|w| VocabEntry {
+            spoken: w.to_string(),
+            replace_with: w.to_string(),
+        })
+        .collect();
+    merged.extend(
+        global
+            .iter()
+            .filter(|e| !profile_words.contains(&e.spoken.to_lowercase()))
+            .cloned(),
+    );
+    merged
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub version: u32,
@@ -93,6 +155,8 @@ pub struct Settings {
     pub vocabulary: Vec<VocabEntry>,
     #[serde(default)]
     pub word_corrections: WordCorrections,
+    #[serde(default)]
+    pub profiles: Vec<AppProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -323,6 +387,7 @@ impl Default for Settings {
             mic_calibration: None,
             vocabulary: default_vocabulary(),
             word_corrections: WordCorrections::default(),
+            profiles: Vec::new(),
         }
     }
 }
@@ -607,5 +672,121 @@ mod tests {
             parsed.prompt_mode.adaptive_refine,
             "missing adaptive_refine key must default to true"
         );
+    }
+
+    fn profile(app: &str, tone: &str, vocab: &[&str]) -> AppProfile {
+        AppProfile {
+            app: app.to_string(),
+            tone: tone.to_string(),
+            vocab: vocab.iter().map(|w| w.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn match_profile_is_case_insensitive_substring() {
+        let profiles = [profile("slack", "casual", &[])];
+        assert_eq!(
+            match_profile(&profiles, "Slack").map(|p| p.tone.as_str()),
+            Some("casual")
+        );
+        // Substring: the pattern need not be the whole process name.
+        assert!(match_profile(&profiles, "Slack Helper").is_some());
+        assert_eq!(
+            match_profile(&profiles, "SLACK").map(|p| p.app.as_str()),
+            Some("slack")
+        );
+    }
+
+    #[test]
+    fn match_profile_first_match_wins() {
+        // "Slack" matches both patterns; the earlier profile must win.
+        let profiles = [
+            profile("slack", "first", &[]),
+            profile("sla", "second", &[]),
+        ];
+        assert_eq!(
+            match_profile(&profiles, "Slack").map(|p| p.tone.as_str()),
+            Some("first")
+        );
+        // Reordering flips the winner — order is significant.
+        let reversed = [
+            profile("sla", "second", &[]),
+            profile("slack", "first", &[]),
+        ];
+        assert_eq!(
+            match_profile(&reversed, "Slack").map(|p| p.tone.as_str()),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn match_profile_skips_blank_patterns_and_misses() {
+        let profiles = [profile("  ", "blank", &[]), profile("", "empty", &[])];
+        // Blank patterns would substring-match everything; they must match nothing.
+        assert!(match_profile(&profiles, "Slack").is_none());
+        assert!(match_profile(&[profile("discord", "x", &[])], "Slack").is_none());
+        assert!(match_profile(&[], "Slack").is_none());
+    }
+
+    #[test]
+    fn merge_profile_vocabulary_puts_profile_words_first() {
+        let global = vec![
+            VocabEntry { spoken: "Lisa".into(), replace_with: "LeaseR".into() },
+            VocabEntry { spoken: "Whisper".into(), replace_with: "Wisspa".into() },
+        ];
+        let merged = merge_profile_vocabulary(&global, &["standup".to_string()]);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].spoken, "standup");
+        assert_eq!(merged[0].replace_with, "standup");
+    }
+
+    #[test]
+    fn merge_profile_vocabulary_profile_wins_on_conflict() {
+        // Global rewrites "lisa" → "LeaseR"; the Slack profile lists "lisa"
+        // (a teammate). The conflicting global entry must be dropped so the
+        // word survives verbatim in that app.
+        let global = vec![VocabEntry {
+            spoken: "Lisa".into(),
+            replace_with: "LeaseR".into(),
+        }];
+        let merged = merge_profile_vocabulary(&global, &["lisa".to_string()]);
+        assert_eq!(merged.len(), 1, "conflicting global entry must be dropped");
+        assert_eq!(merged[0].spoken, "lisa");
+        assert_eq!(merged[0].replace_with, "lisa");
+        // Applying the merged list leaves the word as the profile spelled it.
+        assert_eq!(apply_vocabulary("ping lisa", &merged), "ping lisa");
+        // ...whereas the unmerged global list would have rewritten it.
+        assert_eq!(apply_vocabulary("ping lisa", &global), "ping LeaseR");
+    }
+
+    #[test]
+    fn merge_profile_vocabulary_empty_profile_is_identity() {
+        let global = default_vocabulary();
+        assert_eq!(merge_profile_vocabulary(&global, &[]), global);
+        // Blank words are filtered, not turned into empty entries.
+        let merged = merge_profile_vocabulary(&global, &[" ".to_string(), String::new()]);
+        assert_eq!(merged, global);
+    }
+
+    #[test]
+    fn profiles_round_trip() {
+        let mut settings = Settings::default();
+        settings.profiles = vec![profile("slack", "casual, no greetings", &["standup", "retro"])];
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        let parsed: Settings = serde_json::from_str(&json).expect("deserialize settings");
+        assert_eq!(parsed.profiles.len(), 1);
+        assert_eq!(parsed.profiles[0].app, "slack");
+        assert_eq!(parsed.profiles[0].tone, "casual, no greetings");
+        assert_eq!(parsed.profiles[0].vocab, vec!["standup", "retro"]);
+    }
+
+    #[test]
+    fn profiles_default_empty_when_key_missing() {
+        // Simulate an older settings.json that predates the profiles key.
+        let mut value = serde_json::to_value(Settings::default()).expect("to value");
+        value.as_object_mut().expect("root object").remove("profiles");
+        let parsed = serde_json::from_value::<Settings>(value);
+        assert!(parsed.is_ok(), "missing profiles key must load: {:?}", parsed.err());
+        assert!(parsed.unwrap().profiles.is_empty());
     }
 }

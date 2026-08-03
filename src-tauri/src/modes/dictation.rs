@@ -51,10 +51,22 @@ pub async fn run<R: Runtime>(
     };
     log::info!("target app: {active_app}");
 
-    // Load settings once and reuse — both the correction-application step
-    // and the post-paste opt-in check below read word_corrections, so a
-    // single load avoids extra disk I/O and a TOCTOU window between them.
-    let word_corrections = settings_store::load(app).map(|s| s.word_corrections).ok();
+    // Load settings once and reuse — the correction-application step, the
+    // per-app profile match, and the post-paste opt-in check below all read
+    // it, so a single load avoids extra disk I/O and a TOCTOU window between
+    // them.
+    let settings = settings_store::load(app).ok();
+    let word_corrections = settings.as_ref().map(|s| s.word_corrections.clone());
+    // Per-app profile: matched against the resolved target app. The profile's
+    // tone note is handed to the Haiku cleanup below; its vocabulary was
+    // already merged into the substitution + STT hint by `process_audio`
+    // (which matched against the press-time snapshot before dispatch).
+    let profile = settings
+        .as_ref()
+        .and_then(|s| settings_store::match_profile(&s.profiles, &active_app));
+    if let Some(p) = profile {
+        log::info!("app profile matched: {}", p.app);
+    }
 
     // Apply user-trained word corrections before LLM cleanup so Haiku sees
     // already-corrected text and produces better results.
@@ -71,7 +83,12 @@ pub async fn run<R: Runtime>(
         _ = crate::session::aborted(session) => {
             return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
         }
-        r = llm::haiku_cleanup_dictation(anthropic_api_key, &corrected_transcript, &active_app) => r,
+        r = llm::haiku_cleanup_dictation(
+            anthropic_api_key,
+            &corrected_transcript,
+            &active_app,
+            profile.map(|p| p.tone.as_str()),
+        ) => r,
     };
     let (final_text, cleaned, haiku_diverged) =
         match cleanup {
