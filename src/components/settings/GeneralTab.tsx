@@ -58,6 +58,51 @@ export default function GeneralTab({ settings, patch, patchStt }: Props) {
     "idle" | "ambient" | "speech" | "done" | "error"
   >("idle");
   const [calError, setCalError] = useState<string | null>(null);
+  const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
+
+  async function refreshInputDevices() {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setInputDevices(all.filter((d) => d.kind === "audioinput"));
+    } catch (err) {
+      // Leave the previous list in place; the select still offers System default.
+      console.warn("enumerateDevices failed:", err);
+    }
+  }
+
+  // Populate on mount and keep the list live for USB/Bluetooth hot-swap while
+  // the Settings window is open.
+  useEffect(() => {
+    void refreshInputDevices();
+    const onDeviceChange = () => void refreshInputDevices();
+    navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
+    return () =>
+      navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Device labels are empty until mic permission has been granted (the app
+  // requests it in onboarding and at launch, so in practice labels are present).
+  const micLabelsHidden =
+    inputDevices.length > 0 && inputDevices.every((d) => d.label === "");
+  const inputDeviceOptions = [
+    { value: "", label: "System default" },
+    ...inputDevices.map((d, i) => ({
+      value: d.deviceId,
+      label: d.label || `Microphone ${i + 1}`,
+    })),
+  ];
+  // Keep the select controlled when the saved device is currently unplugged —
+  // show it explicitly instead of snapping back to "System default".
+  if (
+    g.input_device_id &&
+    !inputDeviceOptions.some((o) => o.value === g.input_device_id)
+  ) {
+    inputDeviceOptions.push({
+      value: g.input_device_id,
+      label: "Saved device (unavailable — using system default)",
+    });
+  }
 
   // Sync the toggle against the OS-level Login Items state on mount in
   // case they drifted apart (e.g. user removed Wisspa via System Settings).
@@ -89,11 +134,12 @@ export default function GeneralTab({ settings, patch, patchStt }: Props) {
   async function recalibrate() {
     setCalError(null);
     try {
+      const deviceId = g.input_device_id || undefined;
       setCalStage("ambient");
-      const amb = await sampleAmbient(2000);
+      const amb = await sampleAmbient(2000, deviceId);
       await new Promise((r) => setTimeout(r, 400));
       setCalStage("speech");
-      const speech = await sampleSpeech(2500);
+      const speech = await sampleSpeech(2500, deviceId);
       const silencePeak = Math.max(6, amb.peakAmplitude * 2);
       const minBytesPerSecond = Math.max(
         1500,
@@ -123,6 +169,17 @@ export default function GeneralTab({ settings, patch, patchStt }: Props) {
           checked={g.launch_on_login}
           onChange={(v) => void setLaunchOnLogin(v)}
           label="Launch on login"
+        />
+      </Row>
+
+      <Row
+        label="Check for updates automatically"
+        hint="Checks once shortly after launch and shows a notification when an update is available. Updates are installed manually from Settings → About."
+      >
+        <Toggle
+          checked={g.auto_update_check}
+          onChange={(v) => patch({ auto_update_check: v })}
+          label="Check for updates automatically"
         />
       </Row>
 
@@ -264,6 +321,31 @@ export default function GeneralTab({ settings, patch, patchStt }: Props) {
             model.
           </span>
         )}
+      </Row>
+
+      <Row
+        label="Microphone"
+        hint="Input device used for dictation. If it's unplugged, Wisspa falls back to the system default."
+      >
+        {micLabelsHidden ? (
+          <span className="text-xs text-neutral-500">
+            Microphone access needed to list devices
+          </span>
+        ) : (
+          <Select<string>
+            value={g.input_device_id}
+            onChange={(v) => patch({ input_device_id: v })}
+            options={inputDeviceOptions}
+          />
+        )}
+        <button
+          type="button"
+          onClick={() => void refreshInputDevices()}
+          title="Refresh device list"
+          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Refresh
+        </button>
       </Row>
 
       <Row
