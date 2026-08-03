@@ -336,6 +336,13 @@ pub fn take_target_app() -> Option<String> {
     TARGET_APP.lock().ok().and_then(|mut g| g.take())
 }
 
+/// Read the snapshot without consuming it. Used by `process_audio` to match
+/// per-app profiles before the mode pipeline runs — the pipeline still takes
+/// the snapshot itself later.
+pub fn peek_target_app() -> Option<String> {
+    TARGET_APP.lock().ok().and_then(|g| g.clone())
+}
+
 /// Consume the browser tab snapshot if one was captured. Returns None when
 /// the target app wasn't a browser, no window was open, or Automation was
 /// denied — every caller is expected to handle None as "no extra context."
