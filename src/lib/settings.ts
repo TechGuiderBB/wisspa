@@ -73,6 +73,7 @@ export type Settings = {
     quiet_notifications: boolean;
     verbose_logging: boolean;
     input_device_id: string;
+    auto_update_check: boolean;
   };
   hotkeys: {
     dictation: string;
@@ -112,6 +113,11 @@ export async function getSettings(): Promise<Settings> {
 
 export async function saveSettings(settings: Settings): Promise<void> {
   await invoke("save_settings", { settings });
+}
+
+/** Toast that an app update is available (honours quiet notifications). */
+export async function notifyUpdateAvailable(version: string): Promise<void> {
+  await invoke("notify_update_available", { version });
 }
 
 export async function getApiKeyPresent(name: string): Promise<boolean> {

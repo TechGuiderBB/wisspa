@@ -28,6 +28,19 @@ pub fn get_settings<R: Runtime>(app: AppHandle<R>) -> Result<settings_store::Set
     settings_store::load(&app).map_err(|e| format!("load settings: {e:#}"))
 }
 
+/// Toast that an app update is available. Fired by the frontend's silent
+/// launch-time update check; the check never auto-downloads — the user
+/// installs from Settings → About. Routed through `toast::info` so the
+/// quiet-notifications preference is honoured.
+#[tauri::command]
+pub fn notify_update_available<R: Runtime>(app: AppHandle<R>, version: String) {
+    toast::info(
+        &app,
+        "Update available",
+        &format!("Wisspa {version} is available — install it from Settings → About."),
+    );
+}
+
 #[tauri::command]
 pub fn save_settings<R: Runtime>(
     app: AppHandle<R>,

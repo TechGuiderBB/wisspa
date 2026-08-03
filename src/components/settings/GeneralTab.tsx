@@ -172,6 +172,17 @@ export default function GeneralTab({ settings, patch, patchStt }: Props) {
         />
       </Row>
 
+      <Row
+        label="Check for updates automatically"
+        hint="Checks once shortly after launch and shows a notification when an update is available. Updates are installed manually from Settings → About."
+      >
+        <Toggle
+          checked={g.auto_update_check}
+          onChange={(v) => patch({ auto_update_check: v })}
+          label="Check for updates automatically"
+        />
+      </Row>
+
       <Row label="Show recording overlay">
         <Toggle
           checked={g.show_overlay}

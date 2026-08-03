@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { check } from "@tauri-apps/plugin-updater";
 import {
   startRecording,
   stopRecording,
@@ -12,6 +13,7 @@ import {
 import { processAudio, type RecordingMode } from "./lib/tauri";
 import {
   getSettings,
+  notifyUpdateAvailable,
   reportRecordingTimeout,
   reportSilentRecording,
   resolveSilenceThresholds,
@@ -147,6 +149,30 @@ function Runtime() {
         void import("./lib/settings").then((m) => m.reportMicrophoneStatus(false));
       });
   }, [setError]);
+
+  // Silent update check shortly after launch. Delayed so it doesn't contend
+  // with startup work (mic permission prompt, hotkey registration, tray). An
+  // available update only raises a native toast pointing at Settings → About
+  // — it is never auto-downloaded. Any failure (offline, endpoint down,
+  // unsigned dev build) is a debug log only.
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const s = await getSettings();
+          if (!s.general.auto_update_check) return;
+          const update = await check();
+          if (update) {
+            console.debug(`update available: v${update.version}`);
+            await notifyUpdateAvailable(update.version);
+          }
+        } catch (err) {
+          console.debug("auto update check failed:", err);
+        }
+      })();
+    }, 15_000);
+    return () => window.clearTimeout(id);
+  }, []);
 
   useEffect(() => {
     // Cancellation-safe subscription. React 18 StrictMode mounts effects

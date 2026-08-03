@@ -258,6 +258,7 @@ fn main() {
             commands::ping,
             commands::get_settings,
             commands::save_settings,
+            commands::notify_update_available,
             commands::get_api_key_present,
             commands::save_api_key,
             commands::test_api_key,
