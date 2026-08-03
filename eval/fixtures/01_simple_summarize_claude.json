@@ -1,0 +1,14 @@
+{
+  "name": "simple_summarize_claude",
+  "transcript": "hey um can you write me a prompt that asks to summarise this article in three bullet points",
+  "active_app": "Claude",
+  "browser_context": null,
+  "selected_text": "Australia's housing approvals fell 4.2 per cent in March, the third consecutive monthly decline, as high borrowing costs and construction insolvencies weighed on new projects. Economists said the pipeline of medium-density housing remained resilient in Sydney and Melbourne, but warned that detached housing would stay weak until interest rates fall. The ABS noted total dwelling approvals are now 11 per cent below the decade average.",
+  "expect": {
+    "route": "prompt",
+    "must_include": ["summar", "bullet"],
+    "must_not_include": ["here is", "sure,", "<task>", "<context>"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

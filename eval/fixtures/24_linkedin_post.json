@@ -1,0 +1,17 @@
+{
+  "name": "linkedin_post",
+  "transcript": "write a linkedin post about shipping our new voice mode feature keep it humble but excited and give a shout out to the team",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://www.linkedin.com/feed/",
+    "title": "LinkedIn"
+  },
+  "selected_text": null,
+  "expect": {
+    "route": "content",
+    "must_include": ["voice"],
+    "must_not_include": ["<task>", "here is", "## ", "**"],
+    "max_chars": 1500,
+    "max_sentences": null
+  }
+}

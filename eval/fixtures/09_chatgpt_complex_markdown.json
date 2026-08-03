@@ -1,0 +1,14 @@
+{
+  "name": "chatgpt_complex_markdown",
+  "transcript": "I need a workout plan prompt so three days a week focused on compound lifts I'm a total beginner include a warmup and a cooldown for each session and show progression across eight weeks and format it as a weekly schedule",
+  "active_app": "ChatGPT",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["compound", "beginner", "warm", "weeks", "##"],
+    "must_not_include": ["<task>", "<context>", "here is"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

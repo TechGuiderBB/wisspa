@@ -1,0 +1,17 @@
+{
+  "name": "gmail_reply_with_selection",
+  "transcript": "reply to karen confirming thursday at three works for me and ask her to resend the rent review figures because the attachment didn't come through",
+  "active_app": "Google Chrome",
+  "browser_context": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox - user@example.com - Gmail"
+  },
+  "selected_text": "Hi Brooke, Just confirming our lease renewal meeting has moved to Thursday at 3pm. The rent review figures are attached for your reference. Regards, Karen",
+  "expect": {
+    "route": "content",
+    "must_include": ["karen", "thursday"],
+    "must_not_include": ["<task>", "here is", "sure,", "subject:"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

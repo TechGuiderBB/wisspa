@@ -1,0 +1,14 @@
+{
+  "name": "perplexity_research",
+  "transcript": "research the current stamp duty rates in new south wales for a two million dollar property",
+  "active_app": "Perplexity",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "prompt",
+    "must_include": ["stamp duty", "million"],
+    "must_not_include": ["<context>", "here is"],
+    "max_chars": null,
+    "max_sentences": null
+  }
+}

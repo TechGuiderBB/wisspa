@@ -1,0 +1,14 @@
+{
+  "name": "degenerate_thank_you",
+  "transcript": "Thank you",
+  "active_app": "ChatGPT",
+  "browser_context": null,
+  "selected_text": null,
+  "expect": {
+    "route": "passthrough",
+    "must_include": ["thank"],
+    "must_not_include": ["<task>", "## ", "here is"],
+    "max_chars": 25,
+    "max_sentences": null
+  }
+}
