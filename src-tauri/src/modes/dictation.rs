@@ -361,7 +361,7 @@ async fn snapshot_and_learn<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::dictation_review_focus_target;
+    use super::{dictation_inject_target, dictation_review_focus_target};
 
     #[test]
     fn review_focus_target_uses_the_detected_app() {
