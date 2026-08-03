@@ -374,6 +374,21 @@ pub async fn process_audio<R: Runtime>(
             Err(e) => {
                 log::error!("STT failed: {e:#}");
                 toast::error(&app, "Transcription failed", &format!("{e:#}"));
+                // Persist the failure so it's visible in the History tab —
+                // previously an STT error flashed a toast and the utterance
+                // vanished without a trace. Failure-row convention: the error
+                // summary goes in `output` (there is no transcript to store,
+                // and raw_transcript is NOT NULL so it gets an empty string).
+                let active_app = crate::app_detector::frontmost_app_name().await.ok();
+                let _ = history::insert(history::NewEntry {
+                    mode: mode.clone(),
+                    active_app,
+                    raw_transcript: String::new(),
+                    output: Some(format!("transcription failed: {e:#}")),
+                    duration_ms: Some(started.elapsed().as_millis() as i64),
+                    status: "failure".to_string(),
+                    ..Default::default()
+                });
                 return Err(format!("transcribe: {e:#}"));
             }
         },
@@ -437,22 +452,32 @@ pub async fn process_audio<R: Runtime>(
     }
 
     // action mode returns (text, matched_action_id) so history can record which action ran.
-    let (result, matched_action_id): (Result<String, String>, Option<String>) =
+    // prompt mode additionally reports whether it fell back to the raw transcript,
+    // so the history row can say so instead of claiming a clean success.
+    let (result, matched_action_id, prompt_fallback): (Result<String, String>, Option<String>, bool) =
         match mode.as_str() {
             "action" => {
                 let r = run_action_mode(&app, &transcript, session).await;
                 match r {
-                    Ok((text, aid)) => (Ok(text), aid),
-                    Err(e) => (Err(e), None),
+                    Ok((text, aid)) => (Ok(text), aid, false),
+                    Err(e) => (Err(e), None, false),
                 }
             }
-            "prompt" => (run_prompt_mode(&app, &state, &transcript, session).await, None),
-            _ => (run_dictation_mode(&app, &state, &transcript, session).await, None),
+            "prompt" => {
+                let (r, fallback) = run_prompt_mode(&app, &state, &transcript, session).await;
+                (r, None, fallback)
+            }
+            _ => (run_dictation_mode(&app, &state, &transcript, session).await, None, false),
         };
     let duration_ms = started.elapsed().as_millis() as i64;
     let active_app = crate::app_detector::frontmost_app_name().await.ok();
     let (status, output) = match &result {
-        Ok(text) if !text.is_empty() => ("success", Some(text.clone())),
+        Ok(text) if !text.is_empty() => (
+            // A prompt-mode fallback inserted the raw transcript: the paste
+            // succeeded but the rewrite did not, so record it distinctly.
+            if prompt_fallback { "fallback" } else { "success" },
+            Some(text.clone()),
+        ),
         Ok(_) => ("success", None),
         Err(e) if e == crate::hotkeys::CANCELLED_MARKER => ("cancelled", None),
         Err(e) => ("failure", Some(e.clone())),
@@ -474,12 +499,15 @@ pub async fn process_audio<R: Runtime>(
     }
 }
 
+/// Returns the pipeline result plus whether the run fell back to the raw
+/// transcript (rewrite failed or empty) — the caller records that distinction
+/// in the history row's status.
 async fn run_prompt_mode<R: Runtime>(
     app: &AppHandle<R>,
     state: &State<'_, AppState>,
     transcript: &str,
     session: u64,
-) -> Result<String, String> {
+) -> (Result<String, String>, bool) {
     let anthropic_key = state.anthropic_key();
     // Up-front preflight: if there's no Anthropic key, fail fast with a
     // specific, actionable toast BEFORE app detection / selection capture
@@ -487,10 +515,14 @@ async fn run_prompt_mode<R: Runtime>(
     if prompt_mode::anthropic_key_missing(&anthropic_key) {
         log::warn!("prompt mode aborted: Anthropic API key not configured");
         toast::error(app, "Prompt mode unavailable", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST);
-        return Err(format!("prompt: {}", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST));
+        return (
+            Err(format!("prompt: {}", prompt_mode::ANTHROPIC_KEY_MISSING_TOAST)),
+            false,
+        );
     }
     match prompt_mode::run(app, &anthropic_key, transcript, session).await {
         Ok(outcome) => {
+            let fallback = outcome.used_fallback;
             let preview = preview(&outcome.inserted);
             let mut suffix = Vec::new();
             if outcome.selection_captured {
@@ -505,19 +537,20 @@ async fn run_prompt_mode<R: Runtime>(
                 format!("{preview} ({})", suffix.join(", "))
             };
             // No success banner — the rewritten prompt appears in the focused
-            // app the moment it's pasted. Banner was redundant noise.
+            // app the moment it's pasted. Banner was redundant noise. The
+            // fallback warning toast already fired in prompt_mode::run.
             let _ = body;
-            Ok(outcome.inserted)
+            (Ok(outcome.inserted), fallback)
         }
         Err(e) => {
             let msg = format!("{e:#}");
             if msg == crate::hotkeys::CANCELLED_MARKER {
                 log::info!("prompt cancelled by user (Esc)");
-                return Err(crate::hotkeys::CANCELLED_MARKER.to_string());
+                return (Err(crate::hotkeys::CANCELLED_MARKER.to_string()), false);
             }
             log::error!("prompt mode failed: {e:#}");
             toast::error(app, "Prompt failed", &msg);
-            Err(format!("prompt: {msg}"))
+            (Err(format!("prompt: {msg}")), false)
         }
     }
 }

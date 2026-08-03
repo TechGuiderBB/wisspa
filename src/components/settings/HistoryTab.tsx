@@ -192,6 +192,8 @@ function Row({ entry }: { entry: HistoryEntry }) {
   const statusStyles: Record<string, string> = {
     success: "bg-green-100 text-green-700",
     failure: "bg-red-100 text-red-700",
+    // Prompt mode pasted the raw transcript because the rewrite failed.
+    fallback: "bg-amber-100 text-amber-700",
     cancelled: "bg-slate-100 text-slate-600",
   };
 
