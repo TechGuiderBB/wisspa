@@ -17,6 +17,11 @@
 //! STT/LLM call can be aborted promptly via `tokio::select!`: dropping the
 //! request future cancels the underlying reqwest call, rather than merely
 //! discarding its result after the fact.
+//!
+//! A session is *live* from `begin()` until it is aborted (cancel/supersede)
+//! or retired by `complete()` when its pipeline finishes. `has_active()`
+//! exposes that as a single watermark comparison so the Esc handler can tell
+//! "user wants to cancel" apart from "user pressed Esc in an unrelated app".
 
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -53,6 +58,22 @@ impl SessionTracker {
         self.cancelled_through.fetch_max(cur, Ordering::SeqCst);
     }
 
+    /// Retire a session whose pipeline has finished (success, failure, or a
+    /// terminal report such as silent/timeout). Same watermark move as an
+    /// abort — the session is over either way — but driven by completion, so
+    /// `has_active()` drops to false once nothing is in flight. Idempotent;
+    /// session id 0 (unscoped/legacy) is a no-op.
+    pub fn complete(&self, session: u64) {
+        self.cancelled_through.fetch_max(session, Ordering::SeqCst);
+    }
+
+    /// True while any session is live: begun but not yet cancelled,
+    /// superseded, or completed. Powers the Esc guard — without it every Esc
+    /// press in any app would play the cancel sound and churn tray state.
+    pub fn has_active(&self) -> bool {
+        self.generation.load(Ordering::SeqCst) > self.cancelled_through.load(Ordering::SeqCst)
+    }
+
     /// True if `session` was cancelled (Esc) or superseded by a newer recording.
     /// Session id 0 is "unscoped" (e.g. a frontend predating session plumbing)
     /// and is never auto-aborted, preserving legacy behaviour.
@@ -79,6 +100,37 @@ pub fn begin() -> u64 {
 pub fn cancel_active() {
     TRACKER.cancel_active();
     broadcast();
+}
+
+/// Retire a session whose pipeline has finished. No broadcast: nothing can be
+/// waiting on `aborted()` for a session whose pipeline has already returned.
+pub fn complete(session: u64) {
+    TRACKER.complete(session);
+}
+
+/// True while a recording or pipeline is live. Checked by the Esc handler so
+/// an Esc pressed with nothing in flight is a no-op instead of playing the
+/// cancel sound into an unrelated app.
+pub fn has_active() -> bool {
+    TRACKER.has_active()
+}
+
+/// Retires a session on drop. `process_audio` holds one so EVERY exit path
+/// (success, error, abort, early return) marks the session complete without
+/// enumerating returns — a missed path would leak the session and leave the
+/// Esc guard stuck on "active".
+pub struct SessionCompletion(u64);
+
+impl SessionCompletion {
+    pub fn new(session: u64) -> Self {
+        Self(session)
+    }
+}
+
+impl Drop for SessionCompletion {
+    fn drop(&mut self) {
+        complete(self.0);
+    }
 }
 
 pub fn is_aborted(session: u64) -> bool {
@@ -166,5 +218,47 @@ mod tests {
         let b = t.begin();
         assert!(t.is_aborted(a));
         assert!(!t.is_aborted(b));
+    }
+
+    #[test]
+    fn session_is_active_from_begin_until_complete() {
+        let t = SessionTracker::new();
+        assert!(!t.has_active(), "idle at startup — Esc must no-op");
+        let s = t.begin();
+        assert!(t.has_active(), "live across press → release → pipeline");
+        t.complete(s);
+        assert!(!t.has_active(), "pipeline finished — idle again");
+    }
+
+    #[test]
+    fn cancel_clears_active() {
+        let t = SessionTracker::new();
+        t.begin();
+        assert!(t.has_active());
+        t.cancel_active();
+        assert!(!t.has_active());
+    }
+
+    #[test]
+    fn completing_an_older_session_keeps_the_newer_one_active() {
+        let t = SessionTracker::new();
+        let a = t.begin();
+        let b = t.begin();
+        // a's aborted pipeline returns late and retires itself.
+        t.complete(a);
+        assert!(t.has_active(), "newer session still live");
+        t.complete(b);
+        assert!(!t.has_active());
+    }
+
+    #[test]
+    fn complete_is_idempotent_and_zero_is_a_noop() {
+        let t = SessionTracker::new();
+        t.complete(0);
+        assert!(!t.has_active());
+        let s = t.begin();
+        t.complete(s);
+        t.complete(s);
+        assert!(!t.has_active());
     }
 }

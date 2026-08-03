@@ -33,8 +33,9 @@ pub fn accessibility_trusted() -> bool {
 ///    focus when our global hotkey fired — e.g. Perplexity intercepting
 ///    Cmd+Shift+P alongside Wisspa).
 /// 4. Simulating Cmd+V.
-/// 5. After ~250ms, restoring the snapshotted clipboard content (images,
-///    files, RTF — not just text).
+/// 5. Restoring the snapshotted clipboard content — finally-style: the restore
+///    runs even when activation or Cmd+V fails (after the usual ~250ms
+///    paste-consumption wait on success, immediately on failure).
 ///
 /// The whole window runs under a single-flight mutex with a `session` abort
 /// check (issue #31) so two pastes can't interleave the snapshot/restore.
@@ -87,55 +88,84 @@ pub async fn inject_text<R: Runtime>(
     }
 
     log::info!("inject step 2: writing {} chars to clipboard", text.len());
-    clipboard
-        .write_text(text.to_string())
-        .context("clipboard write_text failed")?;
+    // Once the snapshot exists, the restore MUST run on every exit path —
+    // an early `?` on the activate / Cmd+V steps previously skipped it,
+    // destroying the user's original clipboard (images, files, RTF) and
+    // leaving our dictation text behind. `restore_after` is the finally-style
+    // guarantee; it returns the paste result so the original error still
+    // propagates (unit-tested below).
+    let paste = async {
+        clipboard
+            .write_text(text.to_string())
+            .context("clipboard write_text failed")?;
 
-    if let Some(name) = target_app {
-        log::info!("inject step 2b: re-activating target app '{name}'");
-        // Hard error: a silent activate failure here is the difference between
-        // pasting into Chrome and pasting into whatever else macOS thinks is
-        // frontmost. Caller writes the failure into history so the user sees
-        // status=failed instead of a successful-looking ghost paste.
-        crate::app_detector::activate_app(name)
-            .await
-            .with_context(|| format!("could not re-activate target app '{name}'"))?;
-        // Give the OS time to bring the app forward and shift keyboard focus
-        // into its focused field. 200ms covers browsers on macOS 26 where the
-        // window-activation animation is meaningfully slower than older
-        // releases; under this bar, Cmd+V occasionally lands a tick before
-        // the target's first responder is ready.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
+        if let Some(name) = target_app {
+            log::info!("inject step 2b: re-activating target app '{name}'");
+            // Hard error: a silent activate failure here is the difference between
+            // pasting into Chrome and pasting into whatever else macOS thinks is
+            // frontmost. Caller writes the failure into history so the user sees
+            // status=failed instead of a successful-looking ghost paste.
+            crate::app_detector::activate_app(name)
+                .await
+                .with_context(|| format!("could not re-activate target app '{name}'"))?;
+            // Give the OS time to bring the app forward and shift keyboard focus
+            // into its focused field. 200ms covers browsers on macOS 26 where the
+            // window-activation animation is meaningfully slower than older
+            // releases; under this bar, Cmd+V occasionally lands a tick before
+            // the target's first responder is ready.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
 
-    log::info!("inject step 3: dispatching Cmd+V via AppleScript");
-    send_cmd_v_applescript().await.context("Cmd+V dispatch failed")?;
+        log::info!("inject step 3: dispatching Cmd+V via AppleScript");
+        send_cmd_v_applescript().await.context("Cmd+V dispatch failed")?;
 
-    log::info!("inject step 4: Cmd+V dispatched, sleeping before restore");
-    // Give the target app time to consume the paste.
-    tokio::time::sleep(Duration::from_millis(250)).await;
+        log::info!("inject step 4: Cmd+V dispatched, sleeping before restore");
+        // Give the target app time to consume the paste.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        Ok(())
+    };
 
     log::info!("inject step 5: restoring previous clipboard (all flavors)");
-    if snapshot.is_empty() {
-        // Clipboard was empty (or held only un-restorable promised flavors)
-        // before injection. Leave the injected text in place rather than
-        // clearing, so Cmd+V still works if the user pastes again.
-        log::debug!("clipboard pre-injection content was empty; leaving injected text");
-    } else {
-        crate::clipboard::restore(&snapshot);
-    }
+    let result = restore_after(
+        || {
+            if snapshot.is_empty() {
+                // Clipboard was empty (or held only un-restorable promised flavors)
+                // before injection. Leave the injected text in place rather than
+                // clearing, so Cmd+V still works if the user pastes again.
+                log::debug!("clipboard pre-injection content was empty; leaving injected text");
+            } else {
+                crate::clipboard::restore(&snapshot);
+            }
+        },
+        paste,
+    )
+    .await;
 
     log::info!("inject step 6: done");
-    Ok(())
+    result
+}
+
+/// Finally-style clipboard restore: awaits `paste`, then runs `restore`
+/// exactly once whether the paste succeeded or failed, and returns `paste`'s
+/// result so the original error propagates. Generic so the failure-path
+/// guarantee is unit-testable without an AppHandle or the real pasteboard.
+async fn restore_after<R, F>(restore: R, paste: F) -> Result<()>
+where
+    R: FnOnce(),
+    F: std::future::Future<Output = Result<()>>,
+{
+    let result = paste.await;
+    restore();
+    result
 }
 
 /// Synthesise Cmd+V via AppleScript / System Events. We intentionally do
 /// NOT use `enigo::CGEventPost` for this on macOS: enigo's keystroke path
 /// aborts the host process even with Accessibility granted, bypassing
 /// `catch_unwind` (see `DECISIONS.md` item 9 + the Gotchas in CLAUDE.md).
-/// AppleScript via osascript is the macOS-blessed paste path. enigo
-/// remains the right tool for the `keystroke` action type, but that runs
-/// in an isolated child process where an abort can't take the host down.
+/// AppleScript via osascript is the macOS-blessed paste path. The `keystroke`
+/// action type takes the same route (`combo_to_applescript` in
+/// actions/executor.rs), so enigo is no longer a dependency at all.
 async fn send_cmd_v_applescript() -> Result<()> {
     let output = tokio::process::Command::new("osascript")
         .args([
@@ -153,4 +183,50 @@ async fn send_cmd_v_applescript() -> Result<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::restore_after;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The regression: on the activate / Cmd+V failure paths the restore used
+    /// to be skipped by an early `?`, destroying the user's original clipboard.
+    /// `restore_after` must run the restore exactly once and still return the
+    /// original error.
+    #[tokio::test]
+    async fn restore_runs_on_failure_and_original_error_propagates() {
+        let restores = AtomicUsize::new(0);
+        let result = restore_after(
+            || {
+                restores.fetch_add(1, Ordering::SeqCst);
+            },
+            async { anyhow::bail!("Cmd+V dispatch failed") },
+        )
+        .await;
+        assert_eq!(
+            restores.load(Ordering::SeqCst),
+            1,
+            "restore must run even when the paste fails"
+        );
+        let err = result.expect_err("paste failure must propagate");
+        assert!(
+            err.to_string().contains("Cmd+V dispatch failed"),
+            "original error, not a restore artefact: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn restore_runs_exactly_once_on_success() {
+        let restores = AtomicUsize::new(0);
+        let result = restore_after(
+            || {
+                restores.fetch_add(1, Ordering::SeqCst);
+            },
+            async { Ok(()) },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(restores.load(Ordering::SeqCst), 1);
+    }
 }

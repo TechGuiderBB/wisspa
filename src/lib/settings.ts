@@ -215,12 +215,17 @@ export async function reportSilentRecording(
   durationMs: number,
   peakAmplitude: number,
   bytes: number,
+  session: number,
 ): Promise<void> {
   await invoke("report_silent_recording", {
     mode,
     durationMs,
     peakAmplitude,
     bytes,
+    // Session id lets the backend retire the recording session on this
+    // terminal path (no process_audio call follows), keeping the Esc guard's
+    // active-session check honest.
+    session,
   });
 }
 
@@ -254,12 +259,16 @@ export async function saveWordCorrections(
   await invoke("save_word_corrections", { corrections });
 }
 
-export async function reportRecordingTimeout(maxSeconds: number): Promise<void> {
+export async function reportRecordingTimeout(
+  maxSeconds: number,
+  session: number,
+): Promise<void> {
   // Send the field name explicitly in snake_case so this binding does not rely
   // on Tauri's implicit camelCase→snake_case argument conversion. Removes a
   // class of confusing "missing field max_seconds" runtime failures and makes
-  // the Rust↔JS contract obvious in either direction.
-  await invoke("report_recording_timeout", { max_seconds: maxSeconds });
+  // the Rust↔JS contract obvious in either direction. `session` lets the
+  // backend retire the recording session on this terminal path.
+  await invoke("report_recording_timeout", { max_seconds: maxSeconds, session });
 }
 
 /**
