@@ -34,8 +34,9 @@ pub fn accessibility_trusted() -> bool {
 ///    Cmd+Shift+P alongside Wisspa).
 /// 4. Simulating Cmd+V.
 /// 5. Restoring the snapshotted clipboard content — finally-style: the restore
-///    runs even when activation or Cmd+V fails (after the usual ~250ms
-///    paste-consumption wait on success, immediately on failure).
+///    runs even when activation or Cmd+V fails (on success after the
+///    paste-consumption wait — early once the pasteboard moves on, capped at
+///    250ms — and immediately on failure).
 ///
 /// The whole window runs under a single-flight mutex with a `session` abort
 /// check (issue #31) so two pastes can't interleave the snapshot/restore.
@@ -119,9 +120,22 @@ pub async fn inject_text<R: Runtime>(
         log::info!("inject step 3: dispatching Cmd+V via AppleScript");
         send_cmd_v_applescript().await.context("Cmd+V dispatch failed")?;
 
-        log::info!("inject step 4: Cmd+V dispatched, sleeping before restore");
-        // Give the target app time to consume the paste.
-        tokio::time::sleep(Duration::from_millis(250)).await;
+        log::info!("inject step 4: Cmd+V dispatched, waiting for paste consumption");
+        // Event-driven replacement for the old fixed 250ms sleep. Contract:
+        // NSPasteboard.changeCount bumps on every pasteboard WRITE (our
+        // write_text above already bumped it once, so the baseline is taken
+        // here — strictly after our own writes). When the count moves again
+        // the pasteboard has moved on from our injected text (the paste was
+        // consumed, or another write superseded it) and restoring the
+        // snapshot can no longer clobber an in-flight paste of our text — so
+        // we restore early. Targets whose paste is read-only with respect to
+        // the pasteboard never bump the count; for them the wait runs to
+        // PASTE_WAIT_CAP, exactly the old fixed-sleep worst case.
+        let baseline = crate::clipboard::change_count();
+        match wait_for_paste_consumed(baseline, crate::clipboard::change_count).await {
+            PasteWait::Changed => log::debug!("pasteboard moved; restoring clipboard early"),
+            PasteWait::TimedOut => log::debug!("paste wait cap reached; restoring clipboard"),
+        }
         Ok(())
     };
 
@@ -157,6 +171,46 @@ where
     let result = paste.await;
     restore();
     result
+}
+
+/// Interval between changeCount polls while waiting for the target app to
+/// consume our synthetic paste.
+const PASTE_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// Worst-case post-paste wait before the clipboard restore — identical to the
+/// previous fixed 250ms sleep, so a target that consumes the paste without
+/// the pasteboard moving again costs no more than before.
+const PASTE_WAIT_CAP: Duration = Duration::from_millis(250);
+
+/// Why the post-paste wait ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasteWait {
+    /// changeCount moved off the baseline: the pasteboard has moved on from
+    /// our injected text, so restoring now can't clobber an in-flight paste.
+    Changed,
+    /// Nothing moved within PASTE_WAIT_CAP — same timing as the old fixed
+    /// sleep.
+    TimedOut,
+}
+
+/// Poll `change_count` until it differs from `baseline` or PASTE_WAIT_CAP
+/// elapses, sleeping PASTE_POLL_INTERVAL between checks. Generic over the
+/// counter source so the early-exit / cap behaviour is unit-testable without
+/// a real pasteboard.
+async fn wait_for_paste_consumed<F>(baseline: i64, change_count: F) -> PasteWait
+where
+    F: Fn() -> i64,
+{
+    let start = std::time::Instant::now();
+    loop {
+        if change_count() != baseline {
+            return PasteWait::Changed;
+        }
+        if start.elapsed() >= PASTE_WAIT_CAP {
+            return PasteWait::TimedOut;
+        }
+        tokio::time::sleep(PASTE_POLL_INTERVAL).await;
+    }
 }
 
 /// Synthesise Cmd+V via AppleScript / System Events. We intentionally do
@@ -228,5 +282,54 @@ mod tests {
         .await;
         assert!(result.is_ok());
         assert_eq!(restores.load(Ordering::SeqCst), 1);
+    }
+
+    /// Pasteboard moves before the cap → the wait exits early (Changed) well
+    /// under PASTE_WAIT_CAP. The counter source is a closure over elapsed
+    /// time, so no real pasteboard is needed.
+    #[tokio::test]
+    async fn paste_wait_exits_early_when_count_moves() {
+        let start = std::time::Instant::now();
+        let outcome = super::wait_for_paste_consumed(0, move || {
+            if start.elapsed() >= std::time::Duration::from_millis(60) {
+                1
+            } else {
+                0
+            }
+        })
+        .await;
+        assert_eq!(outcome, super::PasteWait::Changed);
+        assert!(
+            start.elapsed() < super::PASTE_WAIT_CAP,
+            "early exit must beat the cap, took {:?}",
+            start.elapsed()
+        );
+    }
+
+    /// Pasteboard already different on the first check → no sleep at all.
+    #[tokio::test]
+    async fn paste_wait_returns_immediately_when_already_changed() {
+        let start = std::time::Instant::now();
+        let outcome = super::wait_for_paste_consumed(0, || 7).await;
+        assert_eq!(outcome, super::PasteWait::Changed);
+        assert!(start.elapsed() < super::PASTE_POLL_INTERVAL);
+    }
+
+    /// Pasteboard never moves → the wait runs to the cap, preserving the old
+    /// fixed-sleep worst case (and no further: bounded sanity window).
+    #[tokio::test]
+    async fn paste_wait_caps_when_count_never_moves() {
+        let start = std::time::Instant::now();
+        let outcome = super::wait_for_paste_consumed(42, || 42).await;
+        assert_eq!(outcome, super::PasteWait::TimedOut);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed >= super::PASTE_WAIT_CAP,
+            "cap must preserve the old 250ms worst case, took {elapsed:?}"
+        );
+        assert!(
+            elapsed < super::PASTE_WAIT_CAP + std::time::Duration::from_millis(150),
+            "cap must not overshoot wildly, took {elapsed:?}"
+        );
     }
 }

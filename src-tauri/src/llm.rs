@@ -26,6 +26,17 @@ const SONNET_SYSTEM_TEMPLATE: &str = include_str!("prompts/sonnet_prompt.md");
 #[derive(Debug, Deserialize)]
 struct AnthropicResponse {
     content: Vec<ContentBlock>,
+    /// Token accounting. Optional so both the uncached shape and the
+    /// prompt-caching shape (which adds `cache_*_input_tokens`) deserialise.
+    usage: Option<Usage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Usage {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    cache_creation_input_tokens: Option<u64>,
+    cache_read_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -214,6 +225,30 @@ pub async fn sonnet_prompt_rewrite(
     .await
 }
 
+/// Build the Messages API request body. The system prompt is sent as an array
+/// of content blocks (rather than the legacy plain string) so the static block
+/// can carry `cache_control: {"type": "ephemeral"}`. Both system prompts are
+/// large, static-per-process templates, so Anthropic can serve them from its
+/// prompt cache (5-minute TTL) instead of re-processing them on every
+/// dictation — the retry in call_anthropic benefits from the same cached
+/// prefix. The Haiku template interpolates the app name mid-template, so an
+/// app switch rewrites the cache entry (still a win across repeated dictations
+/// into one app); prompts under the provider's minimum cacheable length are
+/// simply processed uncached — no error, no fallback path needed.
+fn request_body(params: &AnthropicParams, system: &str, user_message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "model": params.model,
+        "max_tokens": params.max_tokens,
+        "temperature": params.temperature,
+        "system": [{
+            "type": "text",
+            "text": system,
+            "cache_control": { "type": "ephemeral" },
+        }],
+        "messages": [{ "role": "user", "content": user_message }],
+    })
+}
+
 async fn call_anthropic(
     api_key: &str,
     params: AnthropicParams,
@@ -224,13 +259,7 @@ async fn call_anthropic(
         return Err(anyhow!("ANTHROPIC_API_KEY is empty"));
     }
 
-    let body = serde_json::json!({
-        "model": params.model,
-        "max_tokens": params.max_tokens,
-        "temperature": params.temperature,
-        "system": system,
-        "messages": [{ "role": "user", "content": user_message }],
-    });
+    let body = request_body(&params, system, user_message);
 
     let mut attempt = 0u8;
     loop {
@@ -250,6 +279,19 @@ async fn call_anthropic(
         if status.is_success() {
             let parsed: AnthropicResponse =
                 res.json().await.context("Anthropic response parse")?;
+            // No dedicated usage path exists yet; debug-level so cache
+            // hit/miss is observable in verbose diagnostics without logging
+            // any content.
+            if let Some(usage) = &parsed.usage {
+                log::debug!(
+                    "Anthropic {} usage: {} in / {} out (cache write {}, cache read {})",
+                    params.model,
+                    usage.input_tokens.unwrap_or(0),
+                    usage.output_tokens.unwrap_or(0),
+                    usage.cache_creation_input_tokens.unwrap_or(0),
+                    usage.cache_read_input_tokens.unwrap_or(0),
+                );
+            }
             let text = parsed
                 .content
                 .into_iter()
@@ -438,5 +480,57 @@ mod tests {
         assert!(!msg.contains("ABCDEFGHIJKLMNOP"), "secret tail leaked: {msg}");
         // Status stays readable so the error is still useful for debugging.
         assert!(msg.contains("HTTP 500"), "status lost: {msg}");
+    }
+
+    #[test]
+    fn request_body_marks_system_block_cacheable() {
+        let body = request_body(&AnthropicParams::haiku_cleanup(), "STATIC SYSTEM", "hello");
+        // System prompt goes out as an array of content blocks with
+        // cache_control on the static block — the prompt-caching shape.
+        let system = body["system"]
+            .as_array()
+            .expect("system must be an array of content blocks");
+        assert_eq!(system.len(), 1, "one static system block");
+        assert_eq!(system[0]["type"], "text");
+        assert_eq!(system[0]["text"], "STATIC SYSTEM");
+        assert_eq!(
+            system[0]["cache_control"],
+            serde_json::json!({ "type": "ephemeral" }),
+            "cache breakpoint missing on system block"
+        );
+        // Rest of the body is unchanged from the uncached shape.
+        assert_eq!(body["model"], HAIKU_MODEL);
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "hello");
+    }
+
+    #[test]
+    fn response_deserialises_with_and_without_cache_usage_fields() {
+        // Uncached shape: no usage at all (or usage without cache fields).
+        let plain: AnthropicResponse = serde_json::from_str(
+            r#"{"content":[{"type":"text","text":"hi"}],
+                "usage":{"input_tokens":10,"output_tokens":4}}"#,
+        )
+        .unwrap();
+        let usage = plain.usage.expect("usage must parse");
+        assert_eq!(usage.input_tokens, Some(10));
+        assert_eq!(usage.cache_read_input_tokens, None);
+
+        // Prompt-caching shape: usage carries the cache accounting fields.
+        let cached: AnthropicResponse = serde_json::from_str(
+            r#"{"content":[{"type":"text","text":"hi"}],
+                "usage":{"input_tokens":3,"output_tokens":4,
+                         "cache_creation_input_tokens":1500,
+                         "cache_read_input_tokens":0}}"#,
+        )
+        .unwrap();
+        let usage = cached.usage.expect("cached usage must parse");
+        assert_eq!(usage.cache_creation_input_tokens, Some(1500));
+        assert_eq!(usage.cache_read_input_tokens, Some(0));
+
+        // No usage key at all stays parseable.
+        let bare: AnthropicResponse =
+            serde_json::from_str(r#"{"content":[{"type":"text","text":"hi"}]}"#).unwrap();
+        assert!(bare.usage.is_none());
     }
 }
