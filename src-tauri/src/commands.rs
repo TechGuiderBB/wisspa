@@ -351,7 +351,7 @@ pub async fn process_audio<R: Runtime>(
     // Race STT against cancellation. An Esc (or a newer recording) drops the
     // transcribe future, cancelling the in-flight Groq request rather than
     // letting it run to completion and discarding the result (issue #31).
-    let transcript = tokio::select! {
+    let transcription = tokio::select! {
         biased;
         _ = crate::session::aborted(session) => {
             log::info!("process_audio aborted during STT (session {session})");
@@ -394,6 +394,11 @@ pub async fn process_audio<R: Runtime>(
         },
     };
 
+    let stt::Transcription {
+        text: transcript,
+        segments,
+    } = transcription;
+
     log::info!("transcript ({mode}): {}", crate::redact::redact(&transcript));
 
     if transcript.is_empty() {
@@ -408,21 +413,22 @@ pub async fn process_audio<R: Runtime>(
         return Ok(String::new());
     }
 
-    // Whisper hallucination filter: when the model is fed near-silent or
-    // noise-only audio, it falls back to high-probability outro phrases from
-    // its training data ("Thank you", "Thanks for watching", "Salam", etc.).
-    // Suppress these before they reach the cleanup LLM (which itself can
-    // hallucinate a chatbot response on top of the garbage).
-    if looks_like_whisper_hallucination(&transcript) {
+    // Confidence gate: when the model is fed near-silent or noise-only audio,
+    // it falls back to high-probability outro phrases from its training data
+    // ("Thank you.", "Thanks for watching", etc.). Instead of the old phrase
+    // denylist — which also nuked genuine short dictations — suppress only
+    // when Whisper's own segment confidence says the audio carried no speech.
+    if is_low_confidence(&transcript, &segments) {
         log::warn!(
-            "suppressing likely Whisper hallucination: {}",
+            "suppressing low-confidence transcript ({} segments): {}",
+            segments.len(),
             crate::redact::redact(&transcript)
         );
         emit_status(&app, "no-speech", "No speech detected");
         let _ = history::insert(history::NewEntry {
             mode: mode.clone(),
             raw_transcript: transcript.clone(),
-            output: Some("(suppressed Whisper hallucination)".to_string()),
+            output: Some("(suppressed low-confidence transcript)".to_string()),
             status: "cancelled".to_string(),
             ..Default::default()
         });
@@ -621,52 +627,57 @@ async fn run_action_mode<R: Runtime>(
     }
 }
 
-/// Known low-information Whisper outputs that the model emits when fed
-/// silence or noise. Matching is case-insensitive, punctuation-tolerant.
-const WHISPER_HALLUCINATIONS: &[&str] = &[
-    "thank you",
-    "thanks",
-    "thanks for watching",
-    "thank you for watching",
-    "thank you for listening",
-    "thanks for listening",
-    "thanks for joining",
-    "thank you so much",
-    "bye",
-    "goodbye",
-    "subscribe",
-    "please subscribe",
-    "like and subscribe",
-    "you",
-    "music",
-    "applause",
-    "silence",
-    "salam",
-    "salam forgiveness",
-    "the end",
-    "end of recording",
-    "amen",
-];
+/// Segment `no_speech_prob` at/above which Whisper itself judges the audio to
+/// contain no speech. 0.6 is the cutoff the Whisper decoder uses internally
+/// to flag a segment as likely silence.
+const NO_SPEECH_PROB_REJECT: f64 = 0.6;
 
-fn normalise_for_match(s: &str) -> String {
-    s.chars()
-        .filter(|c| !c.is_ascii_punctuation())
-        .collect::<String>()
-        .to_lowercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+/// Mean segment `avg_logprob` below which a decode is treated as very low
+/// confidence. Real speech typically decodes well above -0.5; noise-induced
+/// hallucinations sit at or below -1.0.
+const AVG_LOGPROB_REJECT: f64 = -1.0;
 
-fn looks_like_whisper_hallucination(text: &str) -> bool {
-    let n = normalise_for_match(text);
-    if n.is_empty() {
+/// The low-logprob rule only fires on short transcripts: the classic
+/// noise-induced hallucination ("Thank you.", "Bye.") is 1–3 words, and a
+/// genuine longer dictation must never be suppressed on logprob alone.
+const LOW_CONFIDENCE_MAX_WORDS: usize = 6;
+
+/// Pure gate deciding whether a transcript is a silence/noise hallucination
+/// to discard, using only the STT provider's own confidence signals:
+///
+/// 1. empty/whitespace transcript → reject (long-standing behaviour, kept);
+/// 2. no segments, or segments missing the relevant fields → ACCEPT — fail
+///    open so a provider response-shape change can never start dropping real
+///    dictation;
+/// 3. every segment reports `no_speech_prob >= NO_SPEECH_PROB_REJECT` →
+///    reject (the model is confident there was no speech);
+/// 4. mean `avg_logprob` below `AVG_LOGPROB_REJECT` AND the transcript is
+///    shorter than `LOW_CONFIDENCE_MAX_WORDS` → reject (the classic
+///    noise-induced "Thank you." shape).
+///
+/// Anything else is kept, so dictating "thank you" as a Slack reply survives.
+fn is_low_confidence(transcript: &str, segments: &[stt::TranscriptSegment]) -> bool {
+    if transcript.trim().is_empty() {
         return true;
     }
-    // Denylist-only: legitimate short dictations like "Yes", "No", "OK"
-    // must not be suppressed. The list captures Whisper's known fallback
-    // phrases for silent / noise input.
-    WHISPER_HALLUCINATIONS.contains(&n.as_str())
+    if segments.is_empty() {
+        return false;
+    }
+    // A segment missing no_speech_prob cannot support a rejection — it counts
+    // as evidence against, keeping the gate fail-open on partial data.
+    let all_no_speech = segments
+        .iter()
+        .all(|s| s.no_speech_prob.is_some_and(|p| p >= NO_SPEECH_PROB_REJECT));
+    if all_no_speech {
+        return true;
+    }
+    let logprobs: Vec<f64> = segments.iter().filter_map(|s| s.avg_logprob).collect();
+    if logprobs.is_empty() {
+        return false;
+    }
+    let mean_logprob = logprobs.iter().sum::<f64>() / logprobs.len() as f64;
+    let word_count = transcript.split_whitespace().count();
+    mean_logprob < AVG_LOGPROB_REJECT && word_count < LOW_CONFIDENCE_MAX_WORDS
 }
 
 fn preview(text: &str) -> String {
@@ -802,4 +813,70 @@ pub fn import_vocabulary_csv(
     existing: Vec<settings_store::VocabEntry>,
 ) -> Result<crate::vocab_import::VocabImport, String> {
     Ok(crate::vocab_import::compute_vocab_import(&csv_text, &existing))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn seg(no_speech_prob: Option<f64>, avg_logprob: Option<f64>) -> stt::TranscriptSegment {
+        stt::TranscriptSegment {
+            no_speech_prob,
+            avg_logprob,
+        }
+    }
+
+    #[test]
+    fn genuine_thank_you_with_decent_confidence_is_kept() {
+        // The phrase denylist nuked this outright; the confidence gate keeps
+        // it because the model reports real speech.
+        let segments = [seg(Some(0.02), Some(-0.15))];
+        assert!(!is_low_confidence("Thank you.", &segments));
+    }
+
+    #[test]
+    fn all_segments_high_no_speech_prob_is_rejected() {
+        let segments = [seg(Some(0.9), Some(-0.3)), seg(Some(0.85), Some(-0.4))];
+        assert!(is_low_confidence("Thank you.", &segments));
+    }
+
+    #[test]
+    fn missing_segments_are_accepted() {
+        // A provider response without a segments array must never start
+        // dropping real dictation.
+        assert!(!is_low_confidence("Thank you.", &[]));
+        assert!(!is_low_confidence("Bye", &[]));
+    }
+
+    #[test]
+    fn empty_or_whitespace_transcript_is_rejected() {
+        assert!(is_low_confidence("", &[]));
+        assert!(is_low_confidence("  \n ", &[seg(Some(0.1), Some(-0.2))]));
+    }
+
+    #[test]
+    fn very_low_logprob_short_transcript_is_rejected() {
+        // The classic noise-induced "Thank you." hallucination shape:
+        // no_speech_prob below the silence cutoff but a very poor decode.
+        let segments = [seg(Some(0.4), Some(-1.4))];
+        assert!(is_low_confidence("Thank you.", &segments));
+    }
+
+    #[test]
+    fn very_low_logprob_long_transcript_is_kept() {
+        // Logprob alone never suppresses a genuine longer dictation.
+        let segments = [seg(Some(0.4), Some(-1.4))];
+        assert!(!is_low_confidence(
+            "please remind me to call the plumber tomorrow morning at nine",
+            &segments
+        ));
+    }
+
+    #[test]
+    fn missing_confidence_fields_fail_open() {
+        // One segment lacks no_speech_prob, so the all-no-speech rule cannot
+        // fire; with no avg_logprob anywhere the logprob rule cannot either.
+        let segments = [seg(Some(0.9), None), seg(None, None)];
+        assert!(!is_low_confidence("Thank you.", &segments));
+    }
 }

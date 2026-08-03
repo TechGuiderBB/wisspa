@@ -35,13 +35,21 @@ export async function importVocabularyCsv(
 
 export const SENSITIVITY_MULTIPLIER: Record<MicSensitivity, number> = {
   off: 0, // 0 == disable silence guard entirely (sentinel value)
-  low: 0.5,
+  // The multiplier scales BOTH silence thresholds, so >1 tightens suppression
+  // and <1 loosens it. Direction matches the Settings UI hint ("Higher =
+  // looser"): high sensitivity halves the thresholds so quiet speakers aren't
+  // discarded; low doubles them for noisy environments.
+  low: 2.0,
   medium: 1.0,
-  high: 2.0,
+  high: 0.5,
 };
 
 export const DEFAULT_SILENCE_PEAK = 6;
-export const DEFAULT_MIN_BYTES_PER_SECOND = 2000;
+// Byte-rate floor for the silence guard when the mic hasn't been calibrated.
+// Quiet-speech opus encodes at roughly 2–4 KB/s, so the old 2000 B/s default
+// overlapped real speech and suppressed quiet speakers. 800 B/s sits safely
+// below that band.
+export const DEFAULT_MIN_BYTES_PER_SECOND = 800;
 
 export type MicCalibration = {
   silence_peak: number;

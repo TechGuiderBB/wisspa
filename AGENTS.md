@@ -70,7 +70,7 @@ wisspa/
 │       ├── commands.rs              # All Tauri commands exposed to the frontend (process_audio lives here)
 │       ├── hotkeys.rs               # Global shortcut registration, live reassignment
 │       ├── audio.rs                 # Audio bridge to frontend
-│       ├── stt.rs                   # Groq Whisper multipart upload + hallucination filter
+│       ├── stt.rs                   # Groq Whisper multipart upload (verbose_json segment confidence)
 │       ├── llm.rs                   # Anthropic Messages API (Haiku + Sonnet)
 │       ├── injector.rs              # Clipboard write + AppleScript Cmd+V
 │       ├── selection.rs             # Read selected text via Cmd+C trick (280 ms wait)
@@ -140,7 +140,7 @@ The pill follows the monitor the cursor is on (see `main.rs`).
 1. Hotkey **press** in `hotkeys.rs` → emits `wisspa://recording-mode` with mode name + `wisspa://start-recording`. Also calls `app_detector::snapshot_target_app_now()` so the user's *intended* frontmost app is captured at press time.
 2. Frontend (`App.tsx`) starts `MediaRecorder` (`audio/webm;codecs=opus` preferred). Overlay window is shown by Rust.
 3. Hotkey **release** → frontend stops `MediaRecorder`, runs silence guard, calls Rust `process_audio` (base64 audio + mode).
-4. Rust decodes → Groq Whisper STT → Whisper-hallucination filter → routes by mode.
+4. Rust decodes → Groq Whisper STT → confidence gate on Whisper's own segment signals (`no_speech_prob` / `avg_logprob`, replacing the old phrase denylist) → routes by mode.
 5. **Dictation:** Haiku cleanup with `{ACTIVE_APP_NAME}` in system prompt → inject via clipboard + `Cmd+V`.
 6. **Action:** match against YAML registry (exact then fuzzy via `strsim::levenshtein` ≤ 3) → execute via `actions/executor.rs`.
 7. **Prompt:** resolve target app (manual override → press-time snapshot → live AppleScript → `"Generic"`) → optionally capture selection → Sonnet rewrite → inject.
