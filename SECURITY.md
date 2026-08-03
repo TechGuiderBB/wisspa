@@ -4,10 +4,7 @@
 
 Please do **not** open a public GitHub issue for security vulnerabilities.
 
-Instead, use one of:
-
-- **GitHub Private Vulnerability Reporting**: the "Security" tab on this repo → "Report a vulnerability".
-- **Email**: user@example.com
+Instead, use **GitHub Private Vulnerability Reporting**: the "Security" tab on this repo → "Report a vulnerability".
 
 Include: affected version/commit, steps to reproduce, and the impact you see. We aim to acknowledge within 48 hours.
 
