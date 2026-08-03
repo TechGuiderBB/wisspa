@@ -114,6 +114,17 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      # tauri::generate_context!() embeds frontendDist (../dist) at compile
+      # time, so the frontend must be built before cargo compiles the crate.
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo registry + target
         uses: actions/cache@v4
