@@ -19,6 +19,7 @@ mod permissions;
 mod prearm;
 mod prompt_review;
 mod redact;
+mod retry;
 mod selection;
 mod session;
 mod settings_store;

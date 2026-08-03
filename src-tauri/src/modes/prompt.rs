@@ -121,6 +121,28 @@ pub struct PromptOutcome {
     pub inserted: String,
     pub selection_captured: bool,
     pub manual_app_override_used: bool,
+    /// True when the Sonnet rewrite failed (or came back empty) and the raw
+    /// transcript was inserted instead — mirrors dictation's `cleaned = false`,
+    /// and lets history record that a fallback happened.
+    pub used_fallback: bool,
+}
+
+/// Resolve the text that flows through the review/preview gates: Sonnet's
+/// rewrite when it succeeded and is non-empty, else the raw transcript. Never
+/// lose the utterance — the same philosophy as dictation mode's Haiku
+/// fallback. Pure so the decision is unit-testable without a Tauri app.
+fn rewrite_or_fallback(rewrite: Result<String>, raw_transcript: &str) -> (String, bool) {
+    match rewrite {
+        Ok(text) if !text.trim().is_empty() => (text, false),
+        Ok(_) => {
+            log::warn!("Sonnet returned empty rewrite — falling back to raw transcript");
+            (raw_transcript.to_string(), true)
+        }
+        Err(e) => {
+            log::error!("Sonnet rewrite failed, falling back to raw transcript: {e:#}");
+            (raw_transcript.to_string(), true)
+        }
+    }
 }
 
 /// Phase 5 prompt-mode pipeline:
@@ -218,7 +240,7 @@ pub async fn run<R: Runtime>(
 
     // Race the rewrite against cancellation: an Esc (or a newer recording)
     // drops the request future, cancelling the in-flight HTTP call (issue #31).
-    let rewritten = tokio::select! {
+    let rewrite = tokio::select! {
         biased;
         _ = crate::session::aborted(session) => {
             return Err(anyhow::anyhow!(crate::hotkeys::CANCELLED_MARKER));
@@ -229,11 +251,16 @@ pub async fn run<R: Runtime>(
             &active_app,
             browser_context.as_ref(),
             &selected_text,
-        ) => r?,
+        ) => r,
     };
 
-    if rewritten.trim().is_empty() {
-        return Err(anyhow::anyhow!("Sonnet returned empty rewrite"));
+    // On rewrite failure, fall back to the raw transcript rather than losing
+    // the utterance. The fallback flows through the SAME gates below (review
+    // window if enabled, else the preview countdown), so the user can still
+    // cancel or edit before anything is pasted.
+    let (rewritten, used_fallback) = rewrite_or_fallback(rewrite, raw_transcript);
+    if used_fallback {
+        toast::warn(app, "Prompt rewrite failed", "Pasting raw transcript.");
     }
 
     // Resolve the text to paste and the app to paste it into. Review and the
@@ -333,6 +360,7 @@ pub async fn run<R: Runtime>(
         inserted: final_text,
         selection_captured,
         manual_app_override_used: manual_override_used,
+        used_fallback,
     })
 }
 
@@ -348,7 +376,10 @@ fn first_chars(s: &str, n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{anthropic_key_missing, classify_branch, host_from_url, ANTHROPIC_KEY_MISSING_TOAST};
+    use super::{
+        anthropic_key_missing, classify_branch, host_from_url, rewrite_or_fallback,
+        ANTHROPIC_KEY_MISSING_TOAST,
+    };
 
     #[test]
     fn anthropic_key_missing_detects_absent_and_whitespace_only() {
@@ -394,5 +425,29 @@ mod tests {
         assert_eq!(classify_branch("Notes", None), "content");
         // Host is the stronger signal: a non-AI tab in a browser is content.
         assert_eq!(classify_branch("Safari", Some("github.com")), "content");
+    }
+
+    #[test]
+    fn successful_rewrite_is_used_verbatim() {
+        let (text, fallback) = rewrite_or_fallback(Ok("rewritten prompt".to_string()), "raw words");
+        assert_eq!(text, "rewritten prompt");
+        assert!(!fallback);
+    }
+
+    #[test]
+    fn failed_rewrite_falls_back_to_raw_transcript() {
+        let (text, fallback) =
+            rewrite_or_fallback(Err(anyhow::anyhow!("Anthropic HTTP 500")), "raw words");
+        assert_eq!(text, "raw words");
+        assert!(fallback, "utterance must not be lost on rewrite failure");
+    }
+
+    #[test]
+    fn empty_or_whitespace_rewrite_falls_back_to_raw_transcript() {
+        for empty in ["", "   \n\t  "] {
+            let (text, fallback) = rewrite_or_fallback(Ok(empty.to_string()), "raw words");
+            assert_eq!(text, "raw words");
+            assert!(fallback, "empty rewrite {empty:?} must fall back");
+        }
     }
 }

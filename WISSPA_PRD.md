@@ -508,7 +508,7 @@ CREATE TABLE history (
   output TEXT,                       -- Cleaned text / action result / generated prompt
   action_id TEXT,                    -- NULL unless mode = 'action'
   duration_ms INTEGER,
-  status TEXT NOT NULL               -- 'success' | 'failure' | 'cancelled'
+  status TEXT NOT NULL               -- 'success' | 'failure' | 'cancelled' | 'fallback' (prompt mode inserted the raw transcript because the rewrite failed)
 );
 
 CREATE INDEX idx_history_timestamp ON history(timestamp DESC);
