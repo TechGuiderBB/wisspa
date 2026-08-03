@@ -139,7 +139,7 @@ The pill follows the monitor the cursor is on (see `main.rs`).
 
 1. Hotkey **press** in `hotkeys.rs` → emits `wisspa://recording-mode` with mode name + `wisspa://start-recording`. Also calls `app_detector::snapshot_target_app_now()` so the user's *intended* frontmost app is captured at press time.
 2. Frontend (`App.tsx`) starts `MediaRecorder` (`audio/webm;codecs=opus` preferred). Overlay window is shown by Rust.
-3. Hotkey **release** → frontend stops `MediaRecorder`, runs silence guard, calls Rust `process_audio` (base64 audio + mode).
+3. Hotkey **release** → frontend stops `MediaRecorder`, runs silence guard, calls Rust `process_audio` (base64 audio + mode). The vocabulary hint sent to Whisper is capped at 800 chars (its prompt window is ~224 tokens), keeping the first entries.
 4. Rust decodes → Groq Whisper STT → confidence gate on Whisper's own segment signals (`no_speech_prob` / `avg_logprob`, replacing the old phrase denylist) → routes by mode.
 5. **Dictation:** Haiku cleanup with `{ACTIVE_APP_NAME}` in system prompt → inject via clipboard + `Cmd+V`.
 6. **Action:** match against YAML registry (exact then fuzzy via `strsim::levenshtein` ≤ 3) → execute via `actions/executor.rs`.
