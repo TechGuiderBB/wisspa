@@ -4,7 +4,7 @@ use tauri::{AppHandle, Runtime};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 /// Read whatever text is currently selected in the focused app by:
-///   1. Snapshot the clipboard.
+///   1. Snapshot the clipboard (all flavors, losslessly — issue #32 machinery).
 ///   2. Simulate Cmd+C via AppleScript.
 ///   3. Wait briefly for the target app to update the clipboard.
 ///   4. Read the clipboard; treat it as the selection iff it differs from
@@ -12,8 +12,14 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 ///      still what's there).
 ///   5. Restore the original clipboard.
 /// Returns `Ok(None)` when no selection was detected.
+///
+/// The snapshot/restore goes through `clipboard.rs` (NSPasteboard, every
+/// flavor) rather than `read_text()`: the old text-only path wrote an empty
+/// string back when a selection WAS captured, silently destroying any prior
+/// image/file clipboard.
 pub async fn read_selected_text<R: Runtime>(app: &AppHandle<R>) -> Result<Option<String>> {
     let clipboard = app.clipboard();
+    let snapshot = crate::clipboard::snapshot();
     let prior = clipboard.read_text().ok();
 
     // Issue Cmd+C in the focused app.
@@ -26,10 +32,12 @@ pub async fn read_selected_text<R: Runtime>(app: &AppHandle<R>) -> Result<Option
         .await?;
     if !copy_output.status.success() {
         // Don't propagate; some apps refuse synthetic Cmd+C. Just no selection.
+        // The snapshot was already taken, so restore before leaving.
         log::warn!(
             "selection Cmd+C failed: {}",
             String::from_utf8_lossy(&copy_output.stderr).trim()
         );
+        crate::clipboard::restore(&snapshot);
         return Ok(None);
     }
 
@@ -46,16 +54,11 @@ pub async fn read_selected_text<R: Runtime>(app: &AppHandle<R>) -> Result<Option
         _ => None,
     };
 
-    // Restore prior clipboard contents. If prior was None (clipboard was empty
-    // or held non-text content that read_text() cannot snapshot), and Cmd+C
-    // wrote the selection into the clipboard, clear rather than leave the
-    // selection text behind — a non-text original is already lost, but at
-    // least the clipboard slot is not silently poisoned with unexpected text.
-    if let Some(prev) = prior {
-        let _ = clipboard.write_text(prev);
-    } else if selection.is_some() {
-        let _ = clipboard.write_text(String::new());
-    }
+    // Restore the original clipboard, all flavors. When the pre-capture
+    // clipboard held nothing restorable (empty, or only promised flavors) the
+    // restore is a no-op and the captured selection text stays behind — same
+    // "leave the text" policy the injector uses for empty snapshots.
+    crate::clipboard::restore(&snapshot);
 
     Ok(selection)
 }
