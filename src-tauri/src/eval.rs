@@ -352,7 +352,7 @@ async fn eval_prompt_rewrite_fixtures() {
         )
         .await;
         match result {
-            Ok(output) => {
+            Ok((output, _usage)) => {
                 let failed = score_output(&fixture.expect, &output, &fixture.transcript);
                 if failed.is_empty() {
                     println!("  PASS {}", fixture.name);

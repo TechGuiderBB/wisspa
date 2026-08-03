@@ -100,6 +100,9 @@ export type Settings = {
     user_profile: string;
     adaptive_refine: boolean;
   };
+  dictation: {
+    review_before_insert: boolean;
+  };
   stt: { provider: string; model: string; language: string };
   cleanup_llm: { provider: string };
   prompt_llm: { provider: string };
@@ -207,6 +210,9 @@ export type HistoryEntry = {
   action_id: string | null;
   duration_ms: number | null;
   status: string;
+  /** Anthropic token usage (summed when a mode made two LLM calls); null when none was captured. */
+  input_tokens: number | null;
+  output_tokens: number | null;
 };
 
 export async function getHistory(limit = 100): Promise<HistoryEntry[]> {

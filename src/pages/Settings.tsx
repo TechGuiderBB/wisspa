@@ -68,6 +68,10 @@ export default function SettingsPage() {
     if (!settings) return;
     persist({ ...settings, prompt_mode: { ...settings.prompt_mode, ...p } });
   }
+  function patchDictation(p: Partial<Settings["dictation"]>) {
+    if (!settings) return;
+    persist({ ...settings, dictation: { ...settings.dictation, ...p } });
+  }
   function patchStt(p: Partial<Settings["stt"]>) {
     if (!settings) return;
     persist({ ...settings, stt: { ...settings.stt, ...p } });
@@ -148,7 +152,12 @@ export default function SettingsPage() {
 
         <div className="px-8 py-6">
           {active === "general" && (
-            <GeneralTab settings={settings} patch={patchGeneral} patchStt={patchStt} />
+            <GeneralTab
+              settings={settings}
+              patch={patchGeneral}
+              patchStt={patchStt}
+              patchDictation={patchDictation}
+            />
           )}
           {active === "apikeys" && <ApiKeysTab />}
           {active === "hotkeys" && (

@@ -144,6 +144,10 @@ pub struct Settings {
     pub general: General,
     pub hotkeys: Hotkeys,
     pub prompt_mode: PromptMode,
+    /// `#[serde(default)]` so settings.json files that predate the section
+    /// load unchanged (the section defaults to every gate off).
+    #[serde(default)]
+    pub dictation: Dictation,
     pub stt: Stt,
     pub cleanup_llm: Llm,
     pub prompt_llm: Llm,
@@ -291,6 +295,18 @@ fn default_adaptive_refine() -> bool {
     true
 }
 
+/// Dictation-mode settings. New section: every field carries a serde default
+/// so a settings.json that predates the section (or the field) loads with the
+/// shipped defaults rather than tripping the corrupt-reset path.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Dictation {
+    /// Opt-in: after the Haiku cleanup, open the editable review window (the
+    /// same one prompt mode uses) and paste nothing until the user approves.
+    /// Default FALSE — existing installs keep paste-immediately behaviour.
+    #[serde(default)]
+    pub review_before_insert: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Stt {
     pub provider: String,
@@ -382,6 +398,7 @@ impl Default for Settings {
                 user_profile: String::new(),
                 adaptive_refine: default_adaptive_refine(),
             },
+            dictation: Dictation::default(),
             stt: Stt {
                 provider: "groq".to_string(),
                 model: "whisper-large-v3-turbo".to_string(),
@@ -659,6 +676,37 @@ mod tests {
             "iOS engineer, terse, prefer tables for comparisons"
         );
         assert!(!parsed.prompt_mode.adaptive_refine);
+    }
+
+    #[test]
+    fn dictation_review_before_insert_default_is_off() {
+        assert!(!Settings::default().dictation.review_before_insert);
+    }
+
+    #[test]
+    fn dictation_review_before_insert_round_trips_when_on() {
+        let mut settings = Settings::default();
+        settings.dictation.review_before_insert = true;
+        let json = serde_json::to_string(&settings).expect("serialize settings");
+        let parsed: Settings = serde_json::from_str(&json).expect("deserialize settings");
+        assert!(parsed.dictation.review_before_insert);
+    }
+
+    #[test]
+    fn dictation_section_defaults_off_when_key_missing() {
+        // Simulate an older settings.json that predates the whole `dictation`
+        // section: it must load with the gate off rather than tripping the
+        // corrupt-reset path.
+        let mut value = serde_json::to_value(Settings::default()).expect("to value");
+        value
+            .as_object_mut()
+            .expect("root object")
+            .remove("dictation");
+        assert!(value.get("dictation").is_none());
+
+        let parsed = serde_json::from_value::<Settings>(value);
+        assert!(parsed.is_ok(), "missing section must deserialize cleanly");
+        assert!(!parsed.unwrap().dictation.review_before_insert);
     }
 
     #[test]
