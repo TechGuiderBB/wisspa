@@ -312,6 +312,50 @@ pub fn cancel_prompt_review(session: u64) -> Result<(), String> {
     Ok(())
 }
 
+/// Upper bound for the comma-joined vocabulary hint sent as Whisper's
+/// `prompt`. Whisper's prompt window is ~224 tokens; at roughly 2–3 chars per
+/// token for short vocabulary words, ~800 chars stays comfortably inside it.
+/// Past the window Groq truncates the prompt arbitrarily (or rejects the
+/// request), which could silently drop the hint entirely.
+const VOCAB_HINT_MAX_CHARS: usize = 800;
+
+/// Build the comma-joined vocabulary hint for Whisper's `prompt` field,
+/// capped at [`VOCAB_HINT_MAX_CHARS`]. When the joined words exceed the cap,
+/// the FIRST entries are kept (the user's most-established vocabulary) and
+/// the cut is made at a word boundary so no partial word is sent.
+fn build_vocab_hint(vocabulary: &[settings_store::VocabEntry]) -> Option<String> {
+    if vocabulary.is_empty() {
+        return None;
+    }
+    let words: Vec<&str> = vocabulary
+        .iter()
+        .map(|v| v.replace_with.as_str())
+        .collect();
+    let joined = words.join(", ");
+    if joined.len() <= VOCAB_HINT_MAX_CHARS {
+        return Some(joined);
+    }
+    // Cut at the last ", " separator under the cap so only whole words are
+    // kept; fall back to a hard char-boundary cut for a single pathological
+    // word longer than the cap.
+    let mut end = VOCAB_HINT_MAX_CHARS;
+    while !joined.is_char_boundary(end) {
+        end -= 1;
+    }
+    let truncated = match joined[..end].rfind(", ") {
+        Some(idx) => &joined[..idx],
+        None => &joined[..end],
+    };
+    log::debug!(
+        "vocab hint truncated: {} -> {} chars ({} of {} words kept)",
+        joined.len(),
+        truncated.len(),
+        truncated.split(", ").count(),
+        words.len(),
+    );
+    Some(truncated.to_string())
+}
+
 #[tauri::command]
 pub async fn process_audio<R: Runtime>(
     app: AppHandle<R>,
@@ -340,16 +384,7 @@ pub async fn process_audio<R: Runtime>(
     let settings = settings_store::load(&app).unwrap_or_default();
     // Honour the verbose-logging toggle without requiring an app restart.
     crate::redact::set_verbose(settings.general.verbose_logging);
-    let vocab_hint: Option<String> = if settings.vocabulary.is_empty() {
-        None
-    } else {
-        let words: Vec<&str> = settings
-            .vocabulary
-            .iter()
-            .map(|v| v.replace_with.as_str())
-            .collect();
-        Some(words.join(", "))
-    };
+    let vocab_hint = build_vocab_hint(&settings.vocabulary);
     // Latency clock for the history entry: starts BEFORE the STT round trip so
     // `duration_ms` reflects the real release→insert latency, including the
     // Groq call (previously the clock started after transcription and
@@ -885,5 +920,71 @@ mod tests {
         // fire; with no avg_logprob anywhere the logprob rule cannot either.
         let segments = [seg(Some(0.9), None), seg(None, None)];
         assert!(!is_low_confidence("Thank you.", &segments));
+    }
+
+    fn vocab(entries: &[&str]) -> Vec<settings_store::VocabEntry> {
+        entries
+            .iter()
+            .map(|w| settings_store::VocabEntry {
+                spoken: (*w).to_string(),
+                replace_with: (*w).to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn empty_vocabulary_produces_no_hint() {
+        assert_eq!(build_vocab_hint(&[]), None);
+    }
+
+    #[test]
+    fn short_vocabulary_passes_through_unchanged() {
+        let v = vocab(&["LeaseR", "TechGuider", "Wisspa"]);
+        assert_eq!(
+            build_vocab_hint(&v).as_deref(),
+            Some("LeaseR, TechGuider, Wisspa")
+        );
+    }
+
+    #[test]
+    fn hint_exactly_at_cap_passes_through_unchanged() {
+        // A single word of exactly VOCAB_HINT_MAX_CHARS chars is under the
+        // cap and must survive untouched.
+        let word = "a".repeat(VOCAB_HINT_MAX_CHARS);
+        let v = vocab(&[&word]);
+        assert_eq!(build_vocab_hint(&v).as_deref(), Some(word.as_str()));
+    }
+
+    #[test]
+    fn oversized_vocabulary_truncates_at_word_boundary_under_cap() {
+        // 100 words of 10 chars joined with ", " ≈ 1198 chars — over the cap.
+        let words: Vec<String> = (0..100).map(|i| format!("word{i:06}")).collect();
+        let refs: Vec<&str> = words.iter().map(String::as_str).collect();
+        let v = vocab(&refs);
+        let hint = build_vocab_hint(&v).expect("hint");
+        assert!(hint.len() <= VOCAB_HINT_MAX_CHARS);
+        // Every kept entry is a complete word from the list (no partial word,
+        // no dangling separator)...
+        for w in hint.split(", ") {
+            assert!(words.iter().any(|x| x == w), "partial word {w:?} in hint");
+        }
+        // ...and truncation kept a strict prefix: the FIRST entries only.
+        let kept = hint.split(", ").count();
+        assert!(kept < words.len());
+        assert_eq!(hint, words[..kept].join(", "));
+        // The next word would not have fit under the cap.
+        let with_next = format!("{hint}, {}", words[kept]);
+        assert!(with_next.len() > VOCAB_HINT_MAX_CHARS);
+    }
+
+    #[test]
+    fn truncation_of_single_multibyte_word_respects_char_boundaries() {
+        // '€' is 3 bytes; the 800-char cap lands mid-character, exercising
+        // the char-boundary backoff on the hard-cut path.
+        let word = "€".repeat(400);
+        let v = vocab(&[word.as_str()]);
+        let hint = build_vocab_hint(&v).expect("hint");
+        assert!(hint.len() <= VOCAB_HINT_MAX_CHARS);
+        assert!(hint.chars().all(|c| c == '€'));
     }
 }
