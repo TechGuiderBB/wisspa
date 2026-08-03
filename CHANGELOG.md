@@ -2,6 +2,47 @@
 
 All notable changes to Wisspa are documented here. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) ahead of the v1.0 cut.
 
+## [0.4.0] — 2026-08-03
+
+First open-source release (MIT License). Bundles the public-launch hardening pass and a full reliability/quality program across the voice pipeline.
+
+### Added
+- **Command Mode** (#66): select text anywhere, hold `⌘⇧C`, speak an instruction ("make this formal", "translate to French") — the selection is rewritten in place. Works with push-to-talk and toggle recording.
+- **Dictation edit-before-insert** (#67): opt-in review window for dictation, reusing Prompt Mode's review gate.
+- **Usage metering** (#67): Anthropic input/output tokens per history row (summed across multi-call runs) with a per-row display and a running total in the History tab.
+- **Per-app profiles** (#65): per-app tone + vocabulary for dictation (new Profiles settings tab). Profile vocab takes precedence over global entries and feeds the STT hint first.
+- **Wider browser context** (#65): Dia added to the scriptable-tab list; Firefox/Zen/Orion get title-only routing context.
+- **Prompt personalisation** (#64): optional free-text user profile injected as standing preferences into Prompt Mode; **adaptive two-pass refinement** (complex transcripts get a critique-and-revise second pass; toggleable, on by default).
+- **Eval harness** (#62): 30 property-scored fixtures (routing, formatting, degenerate input, injection attempts) run against the real rewrite path via `cargo test -- --ignored` (see `eval/README.md`).
+- **Mic input device selection** and **automatic update check on launch** (#63; toast only when an update exists, respects quiet notifications).
+- **Toggle recording mode** (#59): press to start, press again to stop. `show_overlay` now honoured.
+- **STT model + language selection, max recording length slider** (#59): turbo vs full `whisper-large-v3` vs English-only distil; auto-detect or pinned language; 10–120 s cap.
+- **History search, mode filter, re-inject, and 1000-row pruning** (#52).
+- **Recording overlay feedback** (#53): live input level meter, processing elapsed timer, esc-to-cancel hint, wider route chip.
+- **Pipeline resilience** (#55): one retry on transient Groq/Anthropic failures (429 honours Retry-After, capped), Prompt Mode falls back to the raw transcript instead of losing the utterance, STT failures are recorded in history.
+- **Dictation-complete sound toggle** (#50).
+- OSS scaffolding: SECURITY.md, CONTRIBUTING.md, issue templates; `cargo test` + frontend typecheck in CI; all Actions pinned to commit SHAs (#56).
+
+### Changed
+- **Prompt-rewrite system prompt v2** (#60): insufficient-intent passthrough (noise never becomes a fabricated task), a silent quality bar, few-shot exemplars, and real input documentation. Plus an output preamble guard with warn-level telemetry.
+- **Confidence-based silence gating** (#58): Groq `verbose_json` segment confidence (`no_speech_prob` / `avg_logprob`) replaces the phrase denylist that discarded real dictations like "thank you"; fixes the inverted mic-sensitivity multiplier and lowers the byte-rate floor (quiet speakers).
+- **Latency** (#57): Anthropic prompt caching on the static system prompts; event-driven clipboard restore (pasteboard changeCount polling) replaces the fixed 250 ms post-paste sleep.
+- **Vocabulary hint capped** at ~800 chars to stay inside Whisper's prompt window (#61).
+- Removed dead settings (`theme`, unused LLM model fields) and the unused `enigo` dependency (#59, #51).
+
+### Fixed
+- Esc no longer plays a cancel sound system-wide when nothing is recording (#51).
+- Clipboard is restored even when app activation or Cmd+V dispatch fails mid-injection; selection capture no longer clobbers non-text clipboards (#51).
+- Preview countdown no longer stalls invisibly under quiet notifications; history latency metric now includes STT time (#51).
+- `{query}` in `open_url` actions is percent-encoded (#54).
+- Settings sidebar version is dynamic; updater endpoint points at this repo (#51, launch prep).
+- TS Settings mirror gains `word_corrections` (latent reset risk) (#68).
+
+### Security
+- Voice transcripts are now delimited as untrusted input in Prompt Mode (`<transcript_untrusted>`), and the dictation system-prompt app name is sanitised — closing the last two prompt-injection gaps (#54).
+- Real CSP replaces `"csp": null`; devtools capability removed from production (#54).
+- History rewritten before publication to remove internal planning docs and personal data; gitleaks (full history) + cargo audit + semgrep all enforced green in CI.
+
 ## [0.3.0] — 2026-06-04
 
 ### Added
@@ -35,6 +76,7 @@ All notable changes to Wisspa are documented here. The format is loosely based o
 
 Initial public preview. Three-mode voice tool (Dictation, Action, Prompt) with a system-wide hotkey, Whisper STT via Groq, and Anthropic LLM for cleanup + prompt rewriting.
 
+[0.4.0]: https://github.com/TechGuiderBB/wisspa/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/TechGuiderBB/wisspa/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/TechGuiderBB/wisspa/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/TechGuiderBB/wisspa/releases/tag/v0.1.0

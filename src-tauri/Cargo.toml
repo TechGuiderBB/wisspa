@@ -1,6 +1,6 @@
 [package]
 name = "wisspa"
-version = "0.3.0"
+version = "0.4.0"
 description = "Wisspa — system-wide AI voice tool for macOS"
 authors = ["TechGuider"]
 edition = "2021"
