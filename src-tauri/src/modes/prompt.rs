@@ -297,7 +297,12 @@ pub async fn run<R: Runtime>(
     } else {
         // Preview-before-insert: PRD §5.3 step 6. If enabled, show a toast with
         // the first 50 chars and wait the configured timeout before pasting.
-        if pm.show_preview {
+        //
+        // Quiet notifications suppress that toast (toast.rs), so waiting out
+        // the timeout would be an invisible multi-second stall with zero
+        // feedback — nothing on screen explains why the paste hasn't landed.
+        // When the toast can't be seen, skip the wait and paste immediately.
+        if pm.show_preview && !toast::is_quiet(app) {
             let preview = first_chars(&rewritten, 50);
             toast::info(
                 app,

@@ -17,7 +17,9 @@ fn show<R: Runtime>(app: &AppHandle<R>, title: &str, body: &str) {
 /// settings.json loads are cheap and we don't have an in-memory cache to
 /// invalidate when the toggle flips from the settings UI. Failures to load
 /// default to "not quiet" so a corrupt settings file still surfaces toasts.
-fn is_quiet<R: Runtime>(app: &AppHandle<R>) -> bool {
+/// Public so callers whose UX depends on a toast being SEEN (e.g. the prompt
+/// preview wait) can tell suppression apart from delivery.
+pub fn is_quiet<R: Runtime>(app: &AppHandle<R>) -> bool {
     crate::settings_store::load(app)
         .map(|s| s.general.quiet_notifications)
         .unwrap_or(false)

@@ -170,7 +170,7 @@ function Runtime() {
           cancelRecording();
           setRecording(false);
           try {
-            await reportRecordingTimeout(maxSec);
+            await reportRecordingTimeout(maxSec, sessionRef.current);
           } catch (err) {
             console.error("reportRecordingTimeout failed:", err);
           }
@@ -223,6 +223,7 @@ function Runtime() {
               durationMs,
               peakAmplitude,
               blob.size,
+              session,
             );
             return;
           }
