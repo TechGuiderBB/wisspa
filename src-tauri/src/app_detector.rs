@@ -92,12 +92,32 @@ const KNOWN_BROWSERS: &[&str] = &[
     "Arc",
     "Vivaldi",
     "Opera",
+    // Dia (The Browser Company) is Chromium-based and honours the same
+    // `active tab of window 1` AppleScript API as Chrome.
+    "Dia",
     "Safari",
     "Safari Technology Preview",
 ];
 
+/// Browsers with no reliable AppleScript "active tab" API: Firefox and its
+/// derivatives (Zen is Firefox-based, NOT Chromium — it must not join the
+/// AppleScript tab list above), and Orion (WebKit). For these Wisspa captures
+/// only the front window title (via System Events, i.e. the Accessibility
+/// API) as a Prompt Mode routing hint — title, no URL.
+const TITLE_ONLY_BROWSERS: &[&str] = &[
+    "Firefox",
+    "Firefox Developer Edition",
+    "Firefox Nightly",
+    "Zen",
+    "Orion",
+];
+
 pub fn is_browser(name: &str) -> bool {
     KNOWN_BROWSERS.iter().any(|b| name == *b)
+}
+
+pub fn is_title_only_browser(name: &str) -> bool {
+    TITLE_ONLY_BROWSERS.iter().any(|b| name == *b)
 }
 
 fn is_safari_family(name: &str) -> bool {
@@ -240,6 +260,49 @@ fn parse_tab_output(raw: &str) -> Result<(String, String)> {
     Ok((url, title))
 }
 
+/// Read the front window title of a title-only browser via System Events.
+/// Firefox-family browsers (and Orion) expose no scriptable tab object, but
+/// the window title — which contains the page title — is readable through the
+/// Accessibility API, which System Events wraps. Uses Wisspa's existing
+/// Accessibility + System Events grants; no new entitlement or crate.
+/// Best-effort: Err means "no context", callers degrade gracefully.
+async fn read_front_window_title(process_name: &str) -> Result<String> {
+    let safe = process_name.replace('"', "\\\"");
+    let script = format!(
+        r#"try
+    tell application "System Events"
+        tell process "{safe}"
+            if (count of windows) is 0 then error "no open windows"
+            return name of front window
+        end tell
+    end tell
+on error errMsg
+    return "ERR:" & errMsg
+end try"#
+    );
+    let output = tokio::process::Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .await
+        .context("spawn osascript for window title")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(anyhow::anyhow!(
+            "osascript exited {}: {}",
+            output.status,
+            if stderr.is_empty() { "(no stderr)".to_string() } else { stderr }
+        ));
+    }
+    let title = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if title.starts_with("ERR:") {
+        return Err(anyhow::anyhow!("window title query failed: {title}"));
+    }
+    if title.is_empty() {
+        return Err(anyhow::anyhow!("empty window title"));
+    }
+    Ok(title)
+}
+
 /// Snapshot of the user's target app captured at hotkey-press time. Read
 /// later (after STT / cleanup) so we can re-activate it before pasting —
 /// even if another app stole focus when the global shortcut fired.
@@ -268,6 +331,8 @@ fn is_self_app(name: &str) -> bool {
 /// URL + title into TARGET_BROWSER_CONTEXT so Prompt Mode can distinguish
 /// AI surfaces (claude.ai, chatgpt.com) from regular surfaces (Gmail,
 /// Notion) that all report as the same `Google Chrome` process name.
+/// Title-only browsers (Firefox family, Orion) capture just the front window
+/// title with an empty url — the same context shape, less signal.
 ///
 /// Note: the global-shortcut handler runs on a thread without a Tokio
 /// runtime in scope, so we hop onto Tauri's managed runtime via
@@ -323,6 +388,31 @@ pub fn snapshot_target_app_now() {
                             Err(e) => log::debug!("browser context snapshot failed: {e:#}"),
                         }
                     });
+                } else if is_title_only_browser(&name) {
+                    // Firefox-family / Orion: no scriptable tab API, so Prompt
+                    // Mode gets the page title only (empty url) as a routing
+                    // hint. Same untrusted-context shape downstream.
+                    let name_for_task = name.clone();
+                    tauri::async_runtime::spawn(async move {
+                        match read_front_window_title(&name_for_task).await {
+                            Ok(title) => {
+                                log::debug!(
+                                    "title-only browser context snapshot: app={name_for_task} title={}",
+                                    redact_for_log(&title)
+                                );
+                                if let Ok(mut g) = TARGET_BROWSER_CONTEXT.lock() {
+                                    *g = Some(BrowserContext {
+                                        app: name_for_task,
+                                        url: String::new(),
+                                        title,
+                                    });
+                                }
+                            }
+                            Err(e) => {
+                                log::debug!("title-only browser context snapshot failed: {e:#}")
+                            }
+                        }
+                    });
                 }
             }
             Err(e) => log::warn!("target app snapshot failed: {e:#}"),
@@ -374,6 +464,31 @@ mod tests {
         assert!(is_browser("Arc"));
         assert!(is_browser("Vivaldi"));
         assert!(is_browser("Safari Technology Preview"));
+    }
+
+    #[test]
+    fn chromium_clones_join_applescript_tab_list() {
+        // Dia (The Browser Company) is Chromium-based and honours the Chrome
+        // `active tab of window 1` AppleScript API.
+        assert!(is_browser("Dia"));
+        assert!(!is_title_only_browser("Dia"));
+    }
+
+    #[test]
+    fn firefox_family_is_title_only_not_applescript() {
+        // Firefox, Zen (Firefox-based — NOT Chromium) and Orion (WebKit) have
+        // no reliable AppleScript tab API, so they take the window-title
+        // fallback instead of the tab query.
+        for name in ["Firefox", "Firefox Developer Edition", "Firefox Nightly", "Zen", "Orion"] {
+            assert!(is_title_only_browser(name), "{name} must be title-only");
+            assert!(!is_browser(name), "{name} must not join the tab-API list");
+        }
+        // Zen in particular must never be treated as a Chromium clone.
+        assert!(!is_browser("Zen"));
+        // The two lists are disjoint.
+        for name in KNOWN_BROWSERS {
+            assert!(!is_title_only_browser(name), "{name} in both lists");
+        }
     }
 
     #[test]
