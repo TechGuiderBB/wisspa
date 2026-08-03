@@ -178,8 +178,12 @@ pub fn request_screen_recording_access() {
 pub async fn report_recording_timeout<R: Runtime>(
     app: AppHandle<R>,
     max_seconds: u32,
+    session: Option<u64>,
 ) -> Result<(), String> {
     log::warn!("recording exceeded {max_seconds}s cap — auto-stopped by frontend timer");
+    // The timeout path never reaches process_audio, so retire the session
+    // here — otherwise it stays "live" and the Esc guard keeps firing.
+    crate::session::complete(session.unwrap_or(0));
     crate::sounds::play(&app, crate::sounds::Cue::Timeout);
     let active_app = crate::app_detector::frontmost_app_name().await.ok();
     let _ = history::insert(history::NewEntry {
@@ -202,10 +206,14 @@ pub async fn report_silent_recording<R: Runtime>(
     duration_ms: i64,
     peak_amplitude: f32,
     bytes: i64,
+    session: Option<u64>,
 ) -> Result<(), String> {
     log::info!(
         "peak={peak_amplitude:.2} bytes={bytes} duration={duration_ms}ms — silent recording suppressed (mode={mode})"
     );
+    // The silence guard short-circuits before process_audio, so retire the
+    // session here — otherwise it stays "live" and the Esc guard keeps firing.
+    crate::session::complete(session.unwrap_or(0));
     let active_app = crate::app_detector::frontmost_app_name().await.ok();
     let _ = history::insert(history::NewEntry {
         mode: mode.clone(),
@@ -283,6 +291,9 @@ pub async fn process_audio<R: Runtime>(
     // Session id minted on hotkey press and echoed back by the frontend. 0 =
     // an older frontend with no session plumbing (treated as never-cancelled).
     let session = session.unwrap_or(0);
+    // Retire the session on every exit path below (success, error, abort) so
+    // the Esc guard's `has_active()` drops once nothing is in flight.
+    let _session_completion = crate::session::SessionCompletion::new(session);
     let bytes = STANDARD
         .decode(audio_b64.as_bytes())
         .map_err(|e| format!("base64 decode: {e}"))?;

@@ -151,6 +151,18 @@ pub fn build_plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
                     on_release(app, "prompt");
                 }
                 ("cancel", ShortcutState::Pressed) => {
+                    // Esc is registered as a GLOBAL shortcut, so it fires on
+                    // every Esc press in every app. Without a live recording
+                    // or pipeline there is nothing to cancel — no-op instead
+                    // of playing the cancel sound and churning tray/overlay
+                    // state into an unrelated app. Deliberately not logged:
+                    // same activity-recording concern as suppressed toasts
+                    // (toast.rs). `has_active` stays true from hotkey press
+                    // until the pipeline retires the session, so cancelling
+                    // mid-recording or mid-pipeline is unchanged.
+                    if !crate::session::has_active() {
+                        return;
+                    }
                     log::info!("cancel hotkey pressed");
                     crate::app_detector::clear_target_app();
                     crate::sounds::play(app, crate::sounds::Cue::Cancel);
