@@ -3,6 +3,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { getSettings, saveSettings, type AppProfile, type Settings, type VocabEntry } from "../lib/settings";
 import GeneralTab from "../components/settings/GeneralTab";
 import ApiKeysTab from "../components/settings/ApiKeysTab";
+import LicenseTab from "../components/settings/LicenseTab";
 import HotkeysTab from "../components/settings/HotkeysTab";
 import ActionsTab from "../components/settings/ActionsTab";
 import PromptModeTab from "../components/settings/PromptModeTab";
@@ -15,6 +16,7 @@ import VocabTab from "../components/settings/VocabTab";
 type TabId =
   | "general"
   | "apikeys"
+  | "license"
   | "hotkeys"
   | "actions"
   | "prompt_mode"
@@ -27,6 +29,7 @@ type TabId =
 const TABS: { id: TabId; label: string; icon: string; subtitle: string }[] = [
   { id: "general", label: "General", icon: "⚙", subtitle: "Launch, recording & transcription" },
   { id: "apikeys", label: "API Keys", icon: "🔑", subtitle: "Groq & Anthropic" },
+  { id: "license", label: "License", icon: "★", subtitle: "Supporter license" },
   { id: "hotkeys", label: "Hotkeys", icon: "⌨", subtitle: "Triggers for each mode" },
   { id: "actions", label: "Actions", icon: "🪄", subtitle: "Voice commands" },
   { id: "prompt_mode", label: "Prompt Mode", icon: "✨", subtitle: "AI prompt rewrites" },
@@ -160,6 +163,7 @@ export default function SettingsPage() {
             />
           )}
           {active === "apikeys" && <ApiKeysTab />}
+          {active === "license" && <LicenseTab />}
           {active === "hotkeys" && (
             <HotkeysTab settings={settings} patch={patchHotkeys} />
           )}
