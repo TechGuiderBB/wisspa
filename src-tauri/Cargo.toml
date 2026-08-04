@@ -41,6 +41,9 @@ similar = "2"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-autostart = "2.5.1"
+# Already in the tree transitively (via tauri); promoted to a direct dep for the
+# per-install license instance id. Feature unification adds nothing new to build.
+uuid = { version = "1", features = ["v4"] }
 
 # Direct NSPasteboard access for lossless clipboard snapshot/restore (issue #32).
 # objc2 / objc2-app-kit / objc2-foundation are already in the tree transitively

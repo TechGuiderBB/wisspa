@@ -152,6 +152,52 @@ export async function testApiKey(
   return await invoke<string>("test_api_key", { provider, value });
 }
 
+// ── Supporter License ────────────────────────────────────────────────────────
+
+export type LicenseState =
+  | "active"
+  | "no_key"
+  | "not_found"
+  | "refunded"
+  | "disabled"
+  | "activation_limit"
+  | "unreachable"
+  | "server_error";
+
+/**
+ * Mirrors `license::LicenseStatus` on the Rust side. `last_checked_at` is unix
+ * SECONDS (0 = never checked — a synthesised status, not a server answer).
+ */
+export type LicenseStatus = {
+  state: LicenseState;
+  activations_used: number | null;
+  activations_limit: number | null;
+  last_checked_at: number;
+};
+
+/** Store the supporter license key in the Keychain. Saving an empty string removes it. */
+export async function saveLicenseKey(key: string): Promise<void> {
+  await invoke("save_license_key", { key });
+}
+
+export async function getLicenseKeyPresent(): Promise<boolean> {
+  return await invoke<boolean>("get_license_key_present");
+}
+
+export async function deleteLicenseKey(): Promise<void> {
+  await invoke("delete_license_key");
+}
+
+/** Validate the stored key against the license server; persists the verdict. */
+export async function validateLicense(): Promise<LicenseStatus> {
+  return await invoke<LicenseStatus>("validate_license");
+}
+
+/** The last known verdict, no network. Render this first, re-validate lazily. */
+export async function getLicenseStatus(): Promise<LicenseStatus> {
+  return await invoke<LicenseStatus>("get_license_status");
+}
+
 export async function updateHotkey(
   action: HotkeyAction,
   combo: string,
