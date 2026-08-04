@@ -50,7 +50,23 @@ Under the hood it's Claude Sonnet doing the rewrite (with an optional second cri
 | **Action** | `⌘⇧A` | "Take a screenshot", "lock my screen", "search GitHub for wisspa". 14 voice actions ship as editable YAML; add your own in seconds, hot-reload, no restart. |
 | **Cancel** | `Esc` | Abort mid-recording. No API call, no charge. |
 
+A small "Wisspa" pill lives at the top of your screen and flashes red while recording — that's the whole interface until you need settings:
+
+<p align="center">
+  <img src="docs/images/pill.png" alt="The Wisspa recording pill, idle state" width="220">
+</p>
+
 Every hotkey is reassignable — during onboarding or any time in Settings. Single keys like `F18` make great one-finger triggers.
+
+<p align="center">
+  <img src="docs/images/hotkeys.png" alt="Settings → Hotkeys — click Change, press your combo, done" width="720">
+</p>
+
+Settings is eleven tabs of actual controls — hotkeys, per-app profiles, vocabulary, corrections, history, license — not a config file in disguise:
+
+<p align="center">
+  <img src="docs/images/settings.png" alt="Wisspa Settings — API keys stored in the macOS Keychain" width="720">
+</p>
 
 ## Get it
 
