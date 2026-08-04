@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   API_KEY_NAMES,
   API_PROVIDERS,
   ApiProvider,
   PermissionsSnapshot,
   PermissionStatus,
+  Settings,
   completeOnboarding,
   getPermissions,
   getSettings,
@@ -15,6 +16,7 @@ import {
   saveSettings,
   testApiKey,
 } from "../lib/settings";
+import { HotkeyEditor, formatCombo } from "../components/HotkeyEditor";
 import { sampleAmbient, sampleSpeech } from "../lib/audio";
 
 type Step =
@@ -570,6 +572,32 @@ function KeyInput({ provider }: { provider: ApiProvider }) {
 }
 
 function HotkeysStep() {
+  const [hotkeys, setHotkeys] = useState<Settings["hotkeys"] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Ref mirror of the latest full settings object so rapid successive patches
+  // never spread from a stale snapshot (same race the Settings page avoids).
+  const settingsRef = useRef<Settings | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => {
+        settingsRef.current = s;
+        setHotkeys(s.hotkeys);
+      })
+      .catch((e) => setLoadError(String(e)));
+  }, []);
+
+  function onPatch(p: Partial<Settings["hotkeys"]>) {
+    const current = settingsRef.current;
+    if (!current) return;
+    const next = { ...current, hotkeys: { ...current.hotkeys, ...p } };
+    settingsRef.current = next;
+    setHotkeys(next.hotkeys);
+    saveSettings(next).catch((e) =>
+      console.error("saveSettings (hotkeys) failed:", e),
+    );
+  }
+
   return (
     <div className="max-w-2xl mx-auto">
       <Card className="p-6">
@@ -579,25 +607,29 @@ function HotkeysStep() {
           </div>
           <div className="flex-1">
             <h2 className="text-xl font-bold tracking-tight text-slate-900">
-              Default hotkeys
+              Set your hotkeys
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Change any of these in Settings → Hotkeys
+              Change them now, or keep the defaults — you can adjust these any
+              time in Settings → Hotkeys
             </p>
           </div>
         </div>
         <p className="text-sm text-slate-700 leading-relaxed mb-5">
-          Wisspa ships with safe push-and-hold combos. Single keys like{" "}
-          <Kbd>F18</Kbd> or <Kbd>F19</Kbd> work great if you'd prefer one-key
-          triggers.
+          Hold <strong>Dictation</strong>, speak, release — your words land
+          wherever your cursor is. The defaults are safe push-and-hold combos;
+          single keys like <Kbd>F18</Kbd> or <Kbd>F19</Kbd> work great if you'd
+          prefer one-key triggers.
         </p>
-        <div className="space-y-2">
-          <Combo label="Dictation" combo="Cmd+Shift+Space" tint="blue" />
-          <Combo label="Action mode" combo="Cmd+Shift+A" tint="violet" />
-          <Combo label="Prompt mode" combo="Cmd+Shift+P" tint="emerald" />
-          <Combo label="Command mode" combo="Cmd+Shift+C" tint="amber" />
-          <Combo label="Cancel recording" combo="Esc" tint="slate" />
-        </div>
+        {loadError && (
+          <div className="text-sm text-red-600">
+            Couldn't load current hotkeys: {loadError}
+          </div>
+        )}
+        {!loadError && hotkeys === null && (
+          <div className="text-sm text-slate-500">Loading current hotkeys…</div>
+        )}
+        {hotkeys && <HotkeyEditor hotkeys={hotkeys} onPatch={onPatch} />}
       </Card>
     </div>
   );
@@ -623,33 +655,6 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Combo({
-  label,
-  combo,
-  tint,
-}: {
-  label: string;
-  combo: string;
-  tint: "blue" | "violet" | "emerald" | "amber" | "slate";
-}) {
-  const dot = {
-    blue: "bg-blue-500",
-    violet: "bg-violet-500",
-    emerald: "bg-emerald-500",
-    amber: "bg-amber-500",
-    slate: "bg-slate-400",
-  }[tint];
-  return (
-    <div className="flex items-center gap-3 px-4 py-3 rounded-lg border border-slate-200 bg-slate-50">
-      <span className={`h-2 w-2 rounded-full ${dot}`} />
-      <div className="flex-1 text-sm text-slate-800">{label}</div>
-      <code className="text-xs font-mono text-slate-700 bg-white border border-slate-200 px-2 py-1 rounded shadow-sm">
-        {combo}
-      </code>
-    </div>
-  );
-}
-
 type CalibrationStage = "idle" | "ambient" | "speech" | "done" | "error";
 
 function TestStep() {
@@ -659,6 +664,15 @@ function TestStep() {
   const [bytesPerSecond, setBytesPerSecond] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
+  // Show the hotkey the user actually set on the previous step, not the
+  // factory default — they may have just changed it.
+  const [dictationHotkey, setDictationHotkey] = useState<string | null>(null);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setDictationHotkey(formatCombo(s.hotkeys.dictation)))
+      .catch((e) => console.error("getSettings (dictation hotkey) failed:", e));
+  }, []);
 
   async function runCalibration() {
     setError(null);
@@ -782,8 +796,8 @@ function TestStep() {
         <div>
           <p className="text-xs text-slate-500 leading-relaxed mb-2">
             Optional final check: click into the box below, hold{" "}
-            <Kbd>Cmd</Kbd>+<Kbd>Shift</Kbd>+<Kbd>Space</Kbd>, dictate something
-            normally, release. Cleaned text should land here.
+            <Kbd>{dictationHotkey ?? "your dictation hotkey"}</Kbd>, dictate
+            something normally, release. Cleaned text should land here.
           </p>
           <textarea
             value={text}
