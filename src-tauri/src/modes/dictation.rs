@@ -2,7 +2,7 @@ use crate::{app_detector, ax_snapshot, injector, learning, llm, prompt_review, s
 use anyhow::Result;
 use std::collections::HashMap;
 use std::time::Duration;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 
 const EDIT_SNAPSHOT_DELAY_SECS: u64 = 8;
 
@@ -152,6 +152,29 @@ pub async fn run<R: Runtime>(
         let inject_to = dictation_inject_target(app_detected, &active_app);
         (final_text, inject_to)
     };
+
+    // Internal-insert channel: when a Wisspa window's editable field holds
+    // focus (e.g. the onboarding test box), deliver the text straight to that
+    // webview. The system path can't handle this case — as an Accessory app,
+    // clicking our window doesn't reliably make Wisspa frontmost, so the
+    // press-time snapshot points at whatever app was previously active and
+    // the injector would paste there instead. See internal_insert.rs.
+    if let Some(window) = crate::internal_insert::current() {
+        // Consume the press-time snapshot so it can't leak into the next
+        // dictation and hijack its target.
+        let _ = app_detector::take_target_app();
+        app.emit_to(&window, crate::internal_insert::EVENT_INTERNAL_INSERT, &final_text)
+            .map_err(|e| anyhow::anyhow!("internal insert emit to '{window}': {e}"))?;
+        crate::sounds::play(app, crate::sounds::Cue::Complete);
+        return Ok(DictationOutcome {
+            inserted: final_text,
+            app_detected: false,
+            cleaned,
+            long_transcript,
+            haiku_diverged,
+            usage,
+        });
+    }
 
     injector::inject_text(app, &final_text, inject_to.as_deref(), session).await?;
 
