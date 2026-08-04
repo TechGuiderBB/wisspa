@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   API_KEY_NAMES,
   API_PROVIDERS,
@@ -667,11 +669,39 @@ function TestStep() {
   // Show the hotkey the user actually set on the previous step, not the
   // factory default — they may have just changed it.
   const [dictationHotkey, setDictationHotkey] = useState<string | null>(null);
+  const testBoxRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     getSettings()
       .then((s) => setDictationHotkey(formatCombo(s.hotkeys.dictation)))
       .catch((e) => console.error("getSettings (dictation hotkey) failed:", e));
+  }, []);
+
+  // The test box opts into the internal-insert channel while focused: the
+  // backend then emits dictated text straight to this window instead of
+  // pasting into whatever app macOS reports as frontmost (Accessory apps
+  // don't reliably become frontmost on click — see internal_insert.rs).
+  useEffect(() => {
+    const unlisten = listen<string>("internal-insert", (e) => {
+      const el = testBoxRef.current;
+      if (!el) {
+        setText((t) => t + e.payload);
+        return;
+      }
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      el.setRangeText(e.payload, start, end, "end");
+      // setRangeText doesn't fire onChange — sync React state manually.
+      setText(el.value);
+    });
+    return () => {
+      unlisten.then((f) => f());
+      // Safety net: never leave a stale target registered if this step
+      // unmounts while the box is focused.
+      void invoke("set_internal_insert_target", { window: null }).catch(
+        () => {},
+      );
+    };
   }, []);
 
   async function runCalibration() {
@@ -800,8 +830,19 @@ function TestStep() {
             something normally, release. Cleaned text should land here.
           </p>
           <textarea
+            ref={testBoxRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onFocus={() =>
+              void invoke("set_internal_insert_target", {
+                window: "onboarding",
+              }).catch((e) => console.error("register internal target:", e))
+            }
+            onBlur={() =>
+              void invoke("set_internal_insert_target", { window: null }).catch(
+                (e) => console.error("clear internal target:", e),
+              )
+            }
             placeholder="Click here, then dictate…"
             rows={4}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-mono text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"

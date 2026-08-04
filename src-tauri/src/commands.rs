@@ -167,6 +167,14 @@ pub fn resume_hotkeys<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     hotkeys::resume_all(&app).map_err(|e| format!("resume: {e:#}"))
 }
 
+/// Register or clear the webview window that currently accepts internal
+/// inserts (see `internal_insert` module docs). `window: None` clears.
+#[tauri::command]
+pub fn set_internal_insert_target(window: Option<String>) -> Result<(), String> {
+    crate::internal_insert::set(window);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn open_settings_window<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("settings") {

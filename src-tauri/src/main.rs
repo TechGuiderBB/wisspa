@@ -14,6 +14,7 @@ mod eval;
 mod history;
 mod hotkeys;
 mod injector;
+mod internal_insert;
 mod keychain;
 mod learning;
 mod llm;
@@ -266,6 +267,7 @@ fn main() {
             commands::update_hotkey,
             commands::pause_hotkeys,
             commands::resume_hotkeys,
+            commands::set_internal_insert_target,
             commands::open_settings_window,
             commands::get_permissions,
             commands::report_microphone_status,
