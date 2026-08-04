@@ -24,8 +24,10 @@ use tauri::{AppHandle, Manager, Runtime};
 
 /// Default validation endpoint. Overridable via `WISSPA_LICENSE_API_URL` so a
 /// mock server can be pointed at in testing; read per-call (not cached) so the
-/// override works however early the env var is set.
-pub const LICENSE_API_URL: &str = "https://wisspa.app/api/license/validate";
+/// override works however early the env var is set. Points at `www` — the apex
+/// domain 308-redirects there, and skipping the hop saves a round trip on
+/// every validation.
+pub const LICENSE_API_URL: &str = "https://www.wisspa.app/api/license/validate";
 const LICENSE_API_URL_ENV: &str = "WISSPA_LICENSE_API_URL";
 
 /// Keychain entry holding the license key, under the same service ("Wisspa")
