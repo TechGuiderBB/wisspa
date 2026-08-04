@@ -129,7 +129,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklEVXpSREpFUTBWRVEwRXpPRGxETUVFS1VsZFJTMjVFYWtzM1pIcFRWVEpIU1dWWlZVeHJVRWxEVmtWQlVsaDZhamxzTXk5MVQwMUdWVXhyU1ZKQ2RXTnRaa2hNUTFkRlNuWUs=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUzRDJEQ0VEQ0EzODlDMEEKUldRS25Eaks3ZHpTVTJHSWVZVUxrUElDVkVBUlh6ajlsMy91T01GVUxrSVJCdWNtZkhMQ1dFSnYK",
       "endpoints": [
         "https://github.com/TechGuiderBB/wisspa/releases/latest/download/latest.json"
       ]
