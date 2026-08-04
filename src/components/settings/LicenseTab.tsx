@@ -113,10 +113,10 @@ export default function LicenseTab() {
           <div>
             <h3 className="font-semibold text-sm">Supporter License</h3>
             <p className="text-xs text-neutral-500 mt-0.5">
-              US$19 once. Signed, auto-updating builds + you fund open-source
-              development. Wisspa works without it.{" "}
+              A$24.99 once. Signed, auto-updating builds + you fund
+              open-source development. Wisspa works without it.{" "}
               <a
-                href="https://wisspa.app/download"
+                href="https://www.wisspa.app/download"
                 target="_blank"
                 rel="noreferrer"
                 className="underline decoration-dotted text-accent"
