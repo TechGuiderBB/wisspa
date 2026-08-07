@@ -112,6 +112,39 @@ jobs:
           # Macs need. (Universal builds add Intel x86_64 — not needed per PRD.)
           args: --target aarch64-apple-darwin
 
+      - name: Notarise & staple the DMG, then replace the release asset
+        # tauri-action notarises and staples the .app, but the .dmg wrapping it
+        # is only Developer-ID signed — Gatekeeper rejects an unnotarised .dmg
+        # on open ("source=Unnotarized Developer ID"), so downloaders get a
+        # scary prompt even though the app inside is fine. Submit the built .dmg
+        # for its own notarisation, staple the ticket, verify Gatekeeper would
+        # accept it, and re-upload it over the draft release's copy.
+        if: success()
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Match only the release artifact (Wisspa_<version>_aarch64.dmg), never
+          # a leftover `rw.*.dmg` temp file, and pick the newest if several exist.
+          DMG=$(ls -t src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Wisspa_*.dmg | head -1)
+          echo "::notice::Notarising DMG: $DMG"
+          xcrun notarytool submit "$DMG" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler validate "$DMG"
+          # Hard gate: fail the build if Gatekeeper wouldn't accept the .dmg.
+          spctl -a -vvv -t open --context context:primary-signature "$DMG"
+          gh release upload "$TAG" "$DMG" --clobber --repo "$REPO"
+          echo "::notice::Notarised + stapled .dmg re-uploaded to $TAG"
+
       - name: Surface manifest path in logs
         if: success()
         run: |
