@@ -1,5 +1,7 @@
 # AGENTS.md — Wisspa (macOS app)
 
+> **ALWAYS READ FIRST: ~/Vault/00-NOW.md** — rebuilt 04:00 daily. Has today's status, what shipped, what needs Brooke. Trust it over the static sections below.
+
 > Working memory for the Wisspa Tauri app repo. Read this first before making changes in this codebase.
 > `CLAUDE.md` points here — there is one canonical guide.
 
@@ -9,18 +11,19 @@
 
 The macOS desktop app. Tauri 2 (Rust backend, React/Vite/TypeScript frontend). Bundle identifier `com.techguider.wisspa`. macOS 13+ on Apple Silicon only. Open source under the MIT License.
 
-System-wide AI voice tool: hold a hotkey, speak, Wisspa does one of three things based on which hotkey was pressed:
+System-wide AI voice tool: hold a hotkey, speak, Wisspa does one of four things based on which hotkey was pressed:
 
 | Mode | Default hotkey | What happens |
 |---|---|---|
 | **Dictation** | `⌘⇧Space` | Speech → Groq Whisper → Claude Haiku cleanup with app-aware tone → pasted into focused field |
+| **Command** | `⌘⇧C` | Select text, hold hotkey, speak instruction → selection rewritten in place via `modes/command.rs` |
 | **Action** | `⌘⇧A` | Speech → match against editable YAML action registry → run shell / AppleScript / open URL / open app / keystroke |
 | **Prompt** | `⌘⇧P` | Speech (+ optional selected text) → Claude Sonnet rewrites into a structured prompt formatted for the focused AI tool (Claude / ChatGPT / Cursor / Gemini) → pasted |
 | **Cancel** | `Esc` | Aborts the current recording, no API call |
 
 The differentiator is **Prompt Mode** — most voice tools solve dictation; Wisspa solves voice-to-good-prompt.
 
-**Status:** v0.3.0 public preview, heading toward v1.0 general release. The app is BYO-key: users supply their own Groq + Anthropic keys (stored in macOS Keychain); the app itself ships with no credentials and talks only to `api.groq.com` and `api.anthropic.com`.
+**Status:** v0.4.0 — IN FULL PRODUCTION (2026-08-03). MIT License, open source (TechGuiderBB/wisspa). Live download at wisspa.app. Supporter license key A$24.99 one-time via LemonSqueezy; BYO-API-key is the free path (users supply their own Groq + Anthropic keys via macOS Keychain).
 
 ---
 
@@ -82,6 +85,19 @@ wisspa/
 │       ├── sounds.rs                # Start/stop recording sounds
 │       ├── toast.rs                 # Native notification toasts
 │       ├── tray.rs                  # Menu-bar icon + menu
+│       ├── ax_snapshot.rs           # AX accessibility snapshot for pre-arm context
+│       ├── clipboard.rs             # Clipboard flavour-preserving read/restore
+│       ├── eval.rs                  # 30-fixture prompt eval harness (cargo test --ignored)
+│       ├── internal_insert.rs       # Internal insert channel for onboarding test-box
+│       ├── learning.rs              # Adaptive learning/profile updates
+│       ├── license.rs               # LemonSqueezy supporter license key validation
+│       ├── logging.rs               # File logger with rotation + redaction policy
+│       ├── prearm.rs                # Pre-arm context snapshot (app + browser tab) on hotkey press
+│       ├── prompt_review.rs         # Dictation edit-before-insert review window
+│       ├── redact.rs                # Transcript/LLM output redaction for logs
+│       ├── retry.rs                 # One retry on transient Groq/Anthropic failures (429 honours Retry-After)
+│       ├── session.rs               # Session ID threading through the pipeline
+│       ├── vocab_import.rs          # Vocabulary hint management and capping
 │       ├── actions/
 │       │   ├── registry.rs          # YAML loader, hot-reload watcher, shell allowlist validation
 │       │   ├── matcher.rs           # Exact (longest trigger wins) → fuzzy (Levenshtein ≤ 3)
@@ -89,6 +105,7 @@ wisspa/
 │       ├── modes/
 │       │   ├── dictation.rs
 │       │   ├── action.rs
+│       │   ├── command.rs           # Pipeline: STT → LLM rewrite of selected text → inject (Command Mode)
 │       │   └── prompt.rs
 │       └── prompts/
 │           ├── haiku_cleanup.md     # Loaded via include_str!() into llm.rs
@@ -97,7 +114,7 @@ wisspa/
 │   ├── App.tsx                      # Hash router → runtime / overlay / settings / onboarding
 │   ├── components/
 │   │   ├── RecordingOverlay.tsx
-│   │   └── settings/                # Settings tabs (General, API Keys, Hotkeys, Actions, Prompt Mode, Vocab, Corrections, History, About)
+│   │   └── settings/                # 11 settings tabs (AboutTab, ActionsTab, ApiKeysTab, CorrectionsTab, GeneralTab, HistoryTab, HotkeysTab, LicenseTab, ProfilesTab, PromptModeTab, VocabTab)
 │   ├── pages/
 │   │   ├── Onboarding.tsx           # 8-step first-launch wizard
 │   │   └── Settings.tsx
@@ -292,7 +309,7 @@ CI:
 | Doc | Purpose |
 |---|---|
 | `README.md` | App overview, modes, hotkeys, troubleshooting |
-| `WISSPA_PRD.md` | Product PRD — reconciled against v0.1.0 code on 2026-05-16. Useful product context; code is authoritative where they disagree. |
+| `WISSPA_PRD.md` | Product PRD — reconciled against v0.1.0 code on 2026-05-16. Useful product context; code wins where they disagree. As of v0.4.0 the code and CHANGELOG are the canonical record. |
 | `DECISIONS.md` | Implementation choices and the reasoning behind them |
 | `CHANGELOG.md` | Release history |
 | `CONTRIBUTING.md` | Dev setup, test commands, PR process |
