@@ -298,6 +298,19 @@ fn diverges_from_raw(raw: &str, cleaned: &str) -> bool {
         return true;
     }
 
+    // Assistant-acknowledgement check. When the cleanup model answers a
+    // question instead of transcribing it, word overlap can't tell — the
+    // acknowledgement parrots the topic vocabulary ("I'm ready to help you
+    // work through your morning brief items" shares most content words with
+    // the question that produced it). The shape gives it away: a question
+    // went in, a non-question came out, and it talks like an assistant.
+    if raw_trim.ends_with('?')
+        && !cleaned_trim.ends_with('?')
+        && contains_assistant_phrasing(cleaned_trim)
+    {
+        return true;
+    }
+
     let raw_words = content_words(raw_trim);
     if raw_words.is_empty() {
         return false;
@@ -309,6 +322,28 @@ fn diverges_from_raw(raw: &str, cleaned: &str) -> bool {
         .count();
     let coverage = kept as f32 / raw_words.len() as f32;
     coverage < 0.5
+}
+
+/// Lowercased, word-boundary-padded check against phrases a dictation editor
+/// must never produce: assistant offers, acknowledgements, and
+/// throat-clearing. Punctuation is normalised to spaces and the string is
+/// padded, so "where is" can never match "here is". Only consulted when a
+/// question came in and a non-question went out, so real dictation
+/// containing these words mid-sentence is unaffected.
+fn contains_assistant_phrasing(cleaned: &str) -> bool {
+    const PHRASES: &[&str] = &[
+        " i'm ", " i'll ", " i'd ", " let me know ", " please share ",
+        " please provide ", " feel free ", " happy to ", " glad to ", " here's ",
+        " here is ", " sure thing ", " of course ", " certainly ", " absolutely ",
+        " assist you ", " help you ",
+    ];
+    let normalised: String = cleaned
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '\'' { c } else { ' ' })
+        .collect();
+    let padded = format!(" {} ", normalised);
+    PHRASES.iter().any(|p| padded.contains(p))
 }
 
 /// Tokenize into lowercased "content words" — alphanumeric, length ≥ 3,
@@ -384,7 +419,7 @@ async fn snapshot_and_learn<R: Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::{dictation_inject_target, dictation_review_focus_target};
+    use super::{contains_assistant_phrasing, dictation_inject_target, dictation_review_focus_target, diverges_from_raw};
 
     #[test]
     fn review_focus_target_uses_the_detected_app() {
@@ -412,5 +447,50 @@ mod tests {
             dictation_inject_target(true, "Notes"),
             Some("Notes".to_string())
         );
+    }
+
+    #[test]
+    fn divergence_flags_assistant_acknowledgement_of_a_question() {
+        // The production failure: user dictated a question, Haiku answered
+        // it with an assistant offer that parrots the topic words. Length
+        // ratio and word coverage both pass — the shape check must catch it.
+        let raw = "All the below items are coming up in my morning brief. Can you help me systematically go through them and fix them?";
+        let answered = "I'm ready to help you work through your morning brief items. Please share the list of items you'd like to go through, and I'll provide clear steps for each one.";
+        assert!(diverges_from_raw(raw, answered));
+    }
+
+    #[test]
+    fn divergence_allows_cleaned_questions_and_assistant_sounding_dictation() {
+        // A question that stays a question is never flagged.
+        assert!(!diverges_from_raw(
+            "What's the desktop application going to look like?",
+            "What's the desktop application going to look like?"
+        ));
+        // Real dictation starting with "I'm" — only an issue when a question
+        // becomes an answer-shaped non-question.
+        assert!(!diverges_from_raw(
+            "I'm going to close out this session. Is there anything else that needs to be remembered?",
+            "I'm going to close out this session. Is there anything else that needs to be remembered?"
+        ));
+        // Legitimate dictation containing assistant-ish words, no question.
+        assert!(!diverges_from_raw(
+            "Yes, proceed. You can pause a couple and see if it works.",
+            "Yes, proceed. You can pause a couple and see if it works."
+        ));
+        // Question mark lost in cleanup but no assistant phrasing — allowed
+        // (punctuation-only change, not an answer).
+        assert!(!diverges_from_raw(
+            "Where is the settings file?",
+            "Where is the settings file."
+        ));
+    }
+
+    #[test]
+    fn assistant_phrasing_matches_assistant_tells_only() {
+        assert!(contains_assistant_phrasing("I'm ready to help you."));
+        assert!(contains_assistant_phrasing("Sure thing, here is the list."));
+        assert!(contains_assistant_phrasing("Please share the file when you can."));
+        assert!(!contains_assistant_phrasing("Can you help me fix these items?"));
+        assert!(!contains_assistant_phrasing("Tell them I am on my way home now"));
     }
 }
