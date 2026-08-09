@@ -2,6 +2,15 @@
 
 All notable changes to Wisspa are documented here. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) ahead of the v1.0 cut.
 
+## [0.4.1] — 2026-08-06
+
+### Changed
+- **Wisspa is fully free and open source.** The planned Supporter License is gone — the License settings tab and all validation plumbing are removed (#78). Signed, notarised builds with automatic updates are free for everyone.
+- **Release builds are now Developer-ID signed and Apple-notarised** (and stapled) — first launch opens with no Gatekeeper warning (#77).
+
+### Security
+- Rotated the updater signing keypair. **Auto-update from 0.4.0 will fail signature verification** — download 0.4.1 manually once from Releases (or wisspa.app/download). No user data or settings are affected.
+
 ## [0.4.0] — 2026-08-03
 
 First open-source release (MIT License). Bundles the public-launch hardening pass and a full reliability/quality program across the voice pipeline.
