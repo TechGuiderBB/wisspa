@@ -62,7 +62,7 @@ Every hotkey is reassignable — during onboarding or any time in Settings. Sing
   <img src="docs/images/hotkeys.png" alt="Settings → Hotkeys — click Change, press your combo, done" width="720">
 </p>
 
-Settings is eleven tabs of actual controls — hotkeys, per-app profiles, vocabulary, corrections, history, license — not a config file in disguise:
+Settings is eleven tabs of actual controls — hotkeys, per-app profiles, vocabulary, corrections, history — not a config file in disguise:
 
 <p align="center">
   <img src="docs/images/settings.png" alt="Wisspa Settings — API keys stored in the macOS Keychain" width="720">
@@ -70,7 +70,7 @@ Settings is eleven tabs of actual controls — hotkeys, per-app profiles, vocabu
 
 ## Get it
 
-**Download:** [wisspa.app/download](https://www.wisspa.app/download) — signed, notarised builds (Supporter License, A$24.99 once, funds development) or free unsigned builds from [Releases](https://github.com/TechGuiderBB/wisspa/releases). Same app either way; dictation is never paywalled.
+**Download:** [wisspa.app/download](https://www.wisspa.app/download) — signed, notarised builds with automatic in-app updates, free forever. Or grab the same build from [Releases](https://github.com/TechGuiderBB/wisspa/releases) / build from source. Same app every way.
 
 **Requirements:** macOS 13+, Apple Silicon, and your own [Groq](https://console.groq.com/keys) (speech-to-text) and [Anthropic](https://console.anthropic.com/settings/keys) (cleanup + prompts) API keys — both have free tiers. Keys live in your macOS Keychain, never in files, never near a server of ours.
 
@@ -102,7 +102,7 @@ Tauri 2 · Rust (hotkeys, STT, LLM, injector, action registry) · React 18 + Vit
 
 ## License
 
-[MIT](LICENSE). Copyright © 2026 TechGuider. Use it, fork it, ship it — attribution is the whole ask. If it saves you time and you want to fund the work, the [Supporter License](https://www.wisspa.app/download) buys you the signed, auto-updating build and our genuine gratitude.
+[MIT](LICENSE). Copyright © 2026 TechGuider. Use it, fork it, ship it — attribution is the whole ask. If it saves you time, the best thanks are a star, a bug report, or telling one person.
 
 ---
 

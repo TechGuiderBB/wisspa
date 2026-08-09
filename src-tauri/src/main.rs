@@ -17,7 +17,6 @@ mod injector;
 mod internal_insert;
 mod keychain;
 mod learning;
-mod license;
 mod llm;
 mod logging;
 mod modes;
@@ -265,11 +264,6 @@ fn main() {
             commands::get_api_key_present,
             commands::save_api_key,
             commands::test_api_key,
-            commands::save_license_key,
-            commands::get_license_key_present,
-            commands::delete_license_key,
-            commands::validate_license,
-            commands::get_license_status,
             commands::update_hotkey,
             commands::pause_hotkeys,
             commands::resume_hotkeys,

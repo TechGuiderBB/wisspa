@@ -1,5 +1,5 @@
 use crate::{
-    actions::registry, history, hotkeys, keychain, license, llm, modes::action as action_mode,
+    actions::registry, history, hotkeys, keychain, llm, modes::action as action_mode,
     modes::command as command_mode, modes::dictation, modes::prompt as prompt_mode, permissions,
     settings_store, stt, toast, AppState,
 };
@@ -146,62 +146,6 @@ pub async fn test_api_key(provider: String, value: String) -> Result<String, Str
         let body = res.text().await.unwrap_or_default();
         Err(format!("HTTP {status}: {body}"))
     }
-}
-
-// ── Supporter License ────────────────────────────────────────────────────────
-
-/// Store the supporter license key in the Keychain (entry `WISSPA_LICENSE_KEY`
-/// under the same "Wisspa" service as the API keys). Saving an empty/blank key
-/// removes the stored one, mirroring the `save_api_key` convention.
-#[tauri::command]
-pub fn save_license_key<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {
-    if key.trim().is_empty() {
-        keychain::delete(license::LICENSE_KEYCHAIN_KEY).map_err(|e| format!("delete: {e:#}"))?;
-    } else {
-        keychain::set(license::LICENSE_KEYCHAIN_KEY, key.trim())
-            .map_err(|e| format!("set: {e:#}"))?;
-    }
-    // The cached verdict belongs to the previous key — drop it so the UI can
-    // never show a stale "active" against the key just saved.
-    license::clear_cached_status(&app);
-    Ok(())
-}
-
-/// Whether a license key is stored, without returning it. Env-var presence
-/// counts (dev convenience, same dodge as `get_api_key_present`).
-#[tauri::command]
-pub fn get_license_key_present() -> Result<bool, String> {
-    if std::env::var(license::LICENSE_KEYCHAIN_KEY)
-        .map(|v| !v.is_empty())
-        .unwrap_or(false)
-    {
-        return Ok(true);
-    }
-    keychain::get(license::LICENSE_KEYCHAIN_KEY)
-        .map(|v| v.is_some_and(|s| !s.is_empty()))
-        .map_err(|e| format!("{e:#}"))
-}
-
-#[tauri::command]
-pub fn delete_license_key<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    keychain::delete(license::LICENSE_KEYCHAIN_KEY).map_err(|e| format!("delete: {e:#}"))?;
-    license::clear_cached_status(&app);
-    Ok(())
-}
-
-/// Validate the stored key against the license relay and persist the verdict.
-/// Network failure reports `unreachable` — never an invalid-license state.
-#[tauri::command]
-pub async fn validate_license<R: Runtime>(
-    app: AppHandle<R>,
-) -> Result<license::LicenseStatus, String> {
-    license::validate(&app).await.map_err(|e| format!("{e:#}"))
-}
-
-/// The last known verdict (no network), so the settings UI renders instantly.
-#[tauri::command]
-pub fn get_license_status<R: Runtime>(app: AppHandle<R>) -> license::LicenseStatus {
-    license::cached_status(&app)
 }
 
 #[tauri::command]
