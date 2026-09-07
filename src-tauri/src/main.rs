@@ -279,6 +279,7 @@ fn main() {
             commands::export_history_csv,
             commands::reinject_text,
             commands::report_silent_recording,
+            commands::report_capture_failure,
             commands::report_recording_timeout,
             commands::get_word_corrections,
             commands::submit_word_correction,

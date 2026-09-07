@@ -16,6 +16,7 @@ import {
   notifyUpdateAvailable,
   reportRecordingTimeout,
   reportSilentRecording,
+  reportCaptureFailure,
   resolveSilenceThresholds,
   type Settings,
 } from "./lib/settings";
@@ -30,6 +31,11 @@ import RecordingOverlay from "./components/RecordingOverlay";
 import PromptReview from "./components/PromptReview";
 import SettingsPage from "./pages/Settings";
 import OnboardingPage from "./pages/Onboarding";
+
+/// A hold shorter than this is an accidental brush of the hotkey, not a
+/// dictation. Real presses in the field run 1.1 s and up; the shortest
+/// accidental taps observed were 0.28 s and 0.41 s.
+const ACCIDENTAL_TAP_MS = 400;
 
 const START_EVENT = "wisspa://start-recording";
 const STOP_EVENT = "wisspa://stop-recording";
@@ -259,7 +265,32 @@ function Runtime() {
       try {
         const result = await stopRecording();
         setRecording(false);
-        if (!result || result.blob.size === 0) return;
+        // A null result is a cancel or a duplicate stop — nothing happened, and
+        // nothing to report. An EMPTY blob is different: the user held the key,
+        // spoke, and the recorder handed back zero bytes. That used to return
+        // silently, which is why eight consecutive capture failures on
+        // 2026-09-07 left no trace anywhere. Always report it.
+        if (!result) return;
+        if (result.blob.size === 0) {
+          console.warn(
+            `capture produced no audio: duration=${result.durationMs}ms ` +
+              `chunks=${result.chunkCount} warmStream=${result.fromWarmStream} ` +
+              `track=${result.trackState}`,
+          );
+          // An accidental brush of the hotkey legitimately yields no audio.
+          // Reporting those would flash an alarming pill and fill history with
+          // noise, which is how a useful signal gets tuned out. Console only.
+          if (result.durationMs < ACCIDENTAL_TAP_MS) return;
+          await reportCaptureFailure(
+            mode,
+            result.durationMs,
+            result.chunkCount,
+            result.fromWarmStream,
+            result.trackState,
+            session,
+          );
+          return;
+        }
         const { blob, peakAmplitude, durationMs } = result;
 
         // Layer 3: apply silence guard before calling Whisper.

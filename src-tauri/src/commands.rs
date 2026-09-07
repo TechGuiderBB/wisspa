@@ -267,6 +267,65 @@ pub async fn report_silent_recording<R: Runtime>(
     Ok(())
 }
 
+/// Diagnostics for a recording that produced no audio *at all* — a distinct
+/// failure from the silence guard above. The silence guard means "we captured
+/// audio and it was quiet"; this means "MediaRecorder handed back zero bytes",
+/// i.e. the capture itself failed.
+///
+/// Pure so the shape stays unit-testable without a Tauri runtime, and so the
+/// field set is pinned by a test — the whole point of this path is that it must
+/// never again fail without leaving evidence.
+pub(crate) fn format_capture_failure(
+    mode: &str,
+    duration_ms: i64,
+    chunks: i64,
+    from_warm_stream: bool,
+    track_state: &str,
+) -> String {
+    format!(
+        "capture produced no audio — mode={mode} duration={duration_ms}ms chunks={chunks} \
+warm_stream={from_warm_stream} track={track_state}"
+    )
+}
+
+/// Report a recording that came back empty. Before this existed the frontend
+/// dropped the empty blob with a bare `return`, so a capture failure left no
+/// trace anywhere — not in the log, not in history, not on screen. Eight
+/// consecutive failures on 2026-09-07 were undiagnosable for exactly that
+/// reason. Mirrors `report_silent_recording`: retire the session, record it,
+/// flash the pill.
+#[tauri::command]
+pub async fn report_capture_failure<R: Runtime>(
+    app: AppHandle<R>,
+    mode: String,
+    duration_ms: i64,
+    chunks: i64,
+    from_warm_stream: bool,
+    track_state: String,
+    session: Option<u64>,
+) -> Result<(), String> {
+    log::warn!(
+        "{}",
+        format_capture_failure(&mode, duration_ms, chunks, from_warm_stream, &track_state)
+    );
+    // Never reaches process_audio, so retire the session here — otherwise it
+    // stays "live" and the Esc guard keeps firing.
+    crate::session::complete(session.unwrap_or(0));
+    let active_app = crate::app_detector::frontmost_app_name().await.ok();
+    let _ = history::insert(history::NewEntry {
+        mode: mode.clone(),
+        active_app,
+        raw_transcript: String::new(),
+        output: Some("(no audio captured — microphone may be in use by another app)".to_string()),
+        action_id: None,
+        duration_ms: Some(duration_ms),
+        status: "error".to_string(),
+        ..Default::default()
+    });
+    emit_status(&app, "error", "No audio captured — check the microphone");
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_history(limit: Option<i64>) -> Result<Vec<history::Entry>, String> {
     history::recent(limit.unwrap_or(100)).map_err(|e| format!("{e:#}"))
@@ -983,6 +1042,24 @@ pub fn import_vocabulary_csv(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_failure_log_carries_every_diagnostic() {
+        // Pins the field set. A capture failure that omits any of these is
+        // undiagnosable after the fact — which is the bug this path fixes.
+        let line = format_capture_failure(
+            "dictation",
+            22730,
+            0,
+            true,
+            "readyState=live muted=true label=MacBook Pro Microphone",
+        );
+        assert!(line.contains("mode=dictation"), "{line}");
+        assert!(line.contains("duration=22730ms"), "{line}");
+        assert!(line.contains("chunks=0"), "{line}");
+        assert!(line.contains("warm_stream=true"), "{line}");
+        assert!(line.contains("muted=true"), "{line}");
+    }
 
     fn seg(no_speech_prob: Option<f64>, avg_logprob: Option<f64>) -> stt::TranscriptSegment {
         stt::TranscriptSegment {

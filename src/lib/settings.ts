@@ -266,6 +266,27 @@ export async function reportSilentRecording(
   });
 }
 
+/// Report a recording that produced no audio at all. Distinct from
+/// `reportSilentRecording`, which means "captured, but quiet" — this means the
+/// capture itself failed and the diagnostics are the only evidence of why.
+export async function reportCaptureFailure(
+  mode: string,
+  durationMs: number,
+  chunks: number,
+  fromWarmStream: boolean,
+  trackState: string,
+  session: number,
+): Promise<void> {
+  await invoke("report_capture_failure", {
+    mode,
+    durationMs,
+    chunks,
+    fromWarmStream,
+    trackState,
+    session,
+  });
+}
+
 export type WordCorrectionEntry = {
   replacement: string;
   count: number;
