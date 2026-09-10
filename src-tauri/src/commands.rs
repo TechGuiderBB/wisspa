@@ -319,7 +319,11 @@ pub async fn report_capture_failure<R: Runtime>(
         output: Some("(no audio captured — microphone may be in use by another app)".to_string()),
         action_id: None,
         duration_ms: Some(duration_ms),
-        status: "error".to_string(),
+        // "failure", not a new "error" value: the frontend history styles a
+        // fixed set (success/failure/fallback/cancelled) and falls through to
+        // neutral grey otherwise, which would read as "cancelled". A capture
+        // failure is a failure and should be red.
+        status: "failure".to_string(),
         ..Default::default()
     });
     emit_status(&app, "error", "No audio captured — check the microphone");
