@@ -19,6 +19,11 @@ export type RecordingResult = {
   blob: Blob;
   peakAmplitude: number; // 0–128 (deviation from uint8 mid-point 128)
   durationMs: number;
+  // Capture diagnostics. Only interesting when the blob comes back empty —
+  // then they are the *only* evidence of why, so they are always populated.
+  chunkCount: number;
+  fromWarmStream: boolean;
+  trackState: string;
 };
 
 const PREFERRED_MIME = "audio/webm;codecs=opus";
@@ -48,6 +53,7 @@ let peakAmplitude = 0;
 let startedAt = 0;
 let stopPromise: Promise<RecordingResult | null> | null = null;
 let stopResolver: ((r: RecordingResult | null) => void) | null = null;
+let promotedWarmStream = false; // did this recording reuse a pre-warmed stream?
 let starting = false; // re-entrance guard — duplicate START events bail
 let stopping = false; // re-entrance guard — duplicate STOP events bail
 
@@ -84,22 +90,35 @@ async function openInputStream(deviceId?: string): Promise<MediaStream> {
   }
 }
 
+/// Why a stream is unusable, or null when it is fine. A macOS mic track that
+/// another process has grabbed stays `readyState === "live"` but goes `muted`,
+/// and MediaRecorder on a muted track runs happily while emitting no data at
+/// all — so `muted` has to be part of every health check, not just the cold one.
+function unhealthyReason(stream: MediaStream): string | null {
+  const tracks = stream.getAudioTracks();
+  if (tracks.length === 0) return "no audio tracks";
+  const track = tracks[0];
+  if (track.readyState !== "live") return `track readyState=${track.readyState}`;
+  if (track.muted) return "track muted";
+  return null;
+}
+
+/// Human-readable track state for the capture-failure report. Read before the
+/// tracks are stopped, otherwise every readyState reads "ended".
+function describeTrack(stream: MediaStream | null): string {
+  if (!stream) return "no stream";
+  const track = stream.getAudioTracks()[0];
+  if (!track) return "no audio tracks";
+  return `readyState=${track.readyState} muted=${track.muted} enabled=${track.enabled} label=${track.label || "(unlabelled)"}`;
+}
+
 async function acquireHealthyStream(deviceId?: string): Promise<MediaStream> {
   const tryOnce = async (): Promise<MediaStream> => {
     const stream = await openInputStream(deviceId);
-    const tracks = stream.getAudioTracks();
-    if (tracks.length === 0) {
+    const reason = unhealthyReason(stream);
+    if (reason) {
       stream.getTracks().forEach((t) => t.stop());
-      throw new MicTrackUnhealthyError("no audio tracks");
-    }
-    const track = tracks[0];
-    if (track.readyState !== "live") {
-      stream.getTracks().forEach((t) => t.stop());
-      throw new MicTrackUnhealthyError(`track readyState=${track.readyState}`);
-    }
-    if (track.muted) {
-      stream.getTracks().forEach((t) => t.stop());
-      throw new MicTrackUnhealthyError("track muted");
+      throw new MicTrackUnhealthyError(reason);
     }
     return stream;
   };
@@ -202,17 +221,27 @@ export async function startRecording(deviceId?: string): Promise<void> {
   starting = true;
   try {
     let stream: MediaStream;
+    // The warm stream must clear the same bar as a cold one. Checking only
+    // `readyState === "live"` here let a muted track through, and a muted
+    // track records silently forever — zero chunks, no error.
     if (
       warmStream &&
       warmDeviceId === deviceId &&
-      warmStream.getAudioTracks()[0]?.readyState === "live"
+      unhealthyReason(warmStream) === null
     ) {
       stream = warmStream;
       warmStream = null;
       warmDeviceId = undefined;
+      promotedWarmStream = true;
     } else {
+      if (warmStream) {
+        console.warn(
+          `discarding unhealthy warm stream: ${unhealthyReason(warmStream) ?? "device changed"}`,
+        );
+      }
       releaseWarmStream();
       stream = await acquireHealthyStream(deviceId);
+      promotedWarmStream = false;
     }
     activeStream = stream;
     chunks = [];
@@ -245,6 +274,10 @@ export async function startRecording(deviceId?: string): Promise<void> {
         blob,
         peakAmplitude,
         durationMs,
+        chunkCount: chunks.length,
+        fromWarmStream: promotedWarmStream,
+        // Read before the tracks below are stopped.
+        trackState: describeTrack(activeStream),
       };
       stopResolver?.(result);
       teardownAnalyser();
