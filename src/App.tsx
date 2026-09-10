@@ -33,9 +33,12 @@ import SettingsPage from "./pages/Settings";
 import OnboardingPage from "./pages/Onboarding";
 
 /// A hold shorter than this is an accidental brush of the hotkey, not a
-/// dictation. Real presses in the field run 1.1 s and up; the shortest
-/// accidental taps observed were 0.28 s and 0.41 s.
-const ACCIDENTAL_TAP_MS = 400;
+/// dictation. Sits in the gap in the observed data: the accidental taps that
+/// produced no audio ran 0.28 s and 0.41 s, while the shortest hold that
+/// produced real audio was 1.12 s. 0.6 s clears both taps with margin and
+/// stays well under any genuine utterance. Below it the failure is still
+/// logged to the console — only the report, history row and pill are skipped.
+const ACCIDENTAL_TAP_MS = 600;
 
 const START_EVENT = "wisspa://start-recording";
 const STOP_EVENT = "wisspa://stop-recording";

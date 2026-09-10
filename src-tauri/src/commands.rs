@@ -1059,6 +1059,10 @@ mod tests {
         assert!(line.contains("chunks=0"), "{line}");
         assert!(line.contains("warm_stream=true"), "{line}");
         assert!(line.contains("muted=true"), "{line}");
+        // The literal is wrapped with a trailing `\` line-continuation, which
+        // Rust strips along with the next line's indentation. Pinning this
+        // keeps the entry greppable as one line if anyone reflows it.
+        assert!(!line.contains('\n'), "log line must stay single-line: {line}");
     }
 
     fn seg(no_speech_prob: Option<f64>, avg_logprob: Option<f64>) -> stt::TranscriptSegment {
