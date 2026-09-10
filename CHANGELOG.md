@@ -2,6 +2,12 @@
 
 All notable changes to Wisspa are documented here. The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) ahead of the v1.0 cut.
 
+## [0.4.2] — 2026-09-10
+
+### Fixed
+- **Capture failures are no longer silent** (#81). A recording that came back with zero bytes was discarded by a bare `return` — no log line, no history row, no on-screen feedback. Eight consecutive dictation failures on 7 September left no evidence anywhere, which is why that incident was never root-caused. Empty captures are now logged with full diagnostics (duration, chunk count, warm-stream flag, mic track state), written to history as a failure, and flashed on the pill. Holds under 600 ms are treated as accidental hotkey brushes and stay console-only, so the new report keeps its signal value.
+- **Warm mic streams are now health-checked before reuse** (#81). `startRecording` promoted a pre-warmed stream on `readyState` alone while the cold path also required the track not be muted. A macOS mic track another process has grabbed stays `live` but goes `muted`, and MediaRecorder on a muted track emits no data at all. Both paths now share one check.
+
 ## [0.4.1] — 2026-08-06
 
 ### Changed
