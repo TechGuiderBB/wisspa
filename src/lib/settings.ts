@@ -272,7 +272,7 @@ export async function reportSilentRecording(
 export async function reportCaptureFailure(
   mode: string,
   durationMs: number,
-  chunks: number,
+  chunkCount: number,
   fromWarmStream: boolean,
   trackState: string,
   session: number,
@@ -280,7 +280,8 @@ export async function reportCaptureFailure(
   await invoke("report_capture_failure", {
     mode,
     durationMs,
-    chunks,
+    // Matches `RecordingResult.chunkCount`; the backend parameter is `chunks`.
+    chunks: chunkCount,
     fromWarmStream,
     trackState,
     session,

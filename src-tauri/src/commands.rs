@@ -316,7 +316,11 @@ pub async fn report_capture_failure<R: Runtime>(
         mode: mode.clone(),
         active_app,
         raw_transcript: String::new(),
-        output: Some("(no audio captured — microphone may be in use by another app)".to_string()),
+        // Deliberately does not name a cause. The 2026-09-07 failure was never
+        // root-caused, and "another app has the mic" is only one candidate
+        // alongside permissions and device changes — asserting it would send
+        // the user down one branch of a tree we can't yet narrow.
+        output: Some("(no audio captured — check the microphone)".to_string()),
         action_id: None,
         duration_ms: Some(duration_ms),
         // "failure", not a new "error" value: the frontend history styles a
