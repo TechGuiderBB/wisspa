@@ -1,0 +1,6 @@
+#!/bin/sh
+# Per-turn gate. The build-properly plugin's Stop hook runs this file whenever Claude tries to end
+# a turn with uncommitted changes, and blocks the stop if it fails.
+# The same two checks CI runs first: the TypeScript type check, then the Rust tests. About 10 seconds
+# on a warm build. It does not build the app; `pnpm build` is still the full check.
+cd "$(dirname "$0")" && pnpm exec tsc --noEmit && cd src-tauri && exec cargo test --locked
